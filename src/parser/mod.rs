@@ -7,6 +7,7 @@ use nom::{
 };
 mod token;
 mod lex;
+mod number;
 
 pub fn incomplete_or_else<F, G, Input, Output, Error: nom::error::ParseError<Input>>(
     mut child: G,
