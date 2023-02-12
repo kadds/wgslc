@@ -1,3 +1,5 @@
+use std::str::Chars;
+
 use nom::{
     branch::alt,
     bytes::complete::{tag, tag_no_case, take_while},
@@ -131,6 +133,54 @@ fn is_error<I>(e: nom::Err<nom::error::Error<I>>) -> bool {
     }
 }
 
+fn keyword(i: &str) -> IResult<&str, Keyword> {
+    Keyword::try_from(i).map_err(|_| {
+        let e: nom::error::Error<&str> = make_error(i, ErrorKind::Alpha);
+        nom::Err::Error(e)
+    }).map(|v| {
+        ("", v)
+    })
+}
+
+fn reserved_keyword(i: &str) -> IResult<&str, ReservedWord> {
+    ReservedWord::try_from(i).map_err(|_| {
+        let e: nom::error::Error<&str> = make_error(i, ErrorKind::Alpha);
+        nom::Err::Error(e)
+    }).map(|v| {
+        ("", v)
+    })
+}
+
+fn check_identifier(mut chars: Chars, start: char) -> bool {
+    if !unicode_ident::is_xid_start(start) {
+        return false;
+    }
+    while let Some(ch) = chars.next() {
+        if !unicode_ident::is_xid_continue(ch) {
+            return false;
+        }
+    }
+    true
+}
+
+fn is_identifier(i: &str) -> bool {
+    let mut chars = i.chars();
+    if let Some(c) = chars.next() {
+        if c == '_' {
+            if let Some(c) = chars.next() {
+                check_identifier(chars, c)
+            } else {
+                false
+            }
+        } else {
+            check_identifier(chars, c)
+        }
+    } else {
+        false
+    }
+}
+
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -153,7 +203,31 @@ pub mod tests {
     }
 
     #[test]
-    fn ident_test() {}
+    fn ident_test() {
+        assert!(is_identifier("_norm"));
+        assert!(is_identifier("_a404"));
+        assert!(is_identifier("parser_x"));
+        assert!(is_identifier("x1"));
+        assert!(is_identifier("var"));
+        assert!(!is_identifier("__"));
+        assert!(!is_identifier("_"));
+        assert!(!is_identifier("_0a"));
+        assert!(!is_identifier("4"));
+        assert!(!is_identifier("4dd"));
+    }
+
+    #[test]
+    fn keyword_test() {
+        assert_ret!(keyword("array"), Keyword::Array);
+        assert_ret!(keyword("f32"), Keyword::F32);
+        assert_ret!(keyword("mat2x2"), Keyword::Mat2x2);
+        assert_ret!(keyword("texture_1d"), Keyword::Texture1d);
+        assert_ret!(keyword("if"), Keyword::If);
+        assert_ret!(reserved_keyword("auto"), ReservedWord::Auto);
+
+        assert_error!(keyword("array1"));
+        assert_error!(keyword("F32"));
+    }
 
     #[test]
     fn literal_test() {

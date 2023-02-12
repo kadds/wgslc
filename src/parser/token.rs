@@ -22,7 +22,7 @@ pub enum Literal {
     Float(Float),
 }
 
-#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString)]
+#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString, Eq, PartialEq, Hash)]
 #[repr(u32)]
 #[strum(serialize_all = "snake_case", use_phf)]
 pub enum Keyword {
@@ -112,7 +112,7 @@ impl Keyword {
     }
 }
 
-#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString)]
+#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString, Eq, PartialEq, Hash)]
 #[repr(u32)]
 #[strum(serialize_all = "snake_case", use_phf)]
 pub enum ReservedWord {
@@ -498,11 +498,6 @@ impl SynToken {
     pub fn max_chars() -> usize {
         3
     }
-}
-
-pub enum Ident<'a> {
-    Ident(&'a str),
-    MemberIdent(&'a str),
 }
 
 pub enum TokenTy {
