@@ -1,15 +1,15 @@
 use std::str::Chars;
 
+use super::{incomplete_or_else, number, one_of_or_else, token::*};
 use nom::{
     branch::alt,
     bytes::complete::{tag, tag_no_case, take_while},
-    character::complete::{digit0, digit1},
-    combinator::{complete, map, map_opt, map_res},
+    character::complete::{digit0, digit1, satisfy},
+    combinator::{complete, map, map_opt, map_res, opt, recognize},
     error::{make_error, ErrorKind},
-    sequence::{preceded, tuple},
+    sequence::{delimited, preceded, tuple},
     IResult,
 };
-use super::{token::*, one_of_or_else, incomplete_or_else, number};
 
 fn bool(i: &str) -> IResult<&str, Literal> {
     map_res(alt((tag("true"), tag("false"))), |s| {
@@ -43,7 +43,7 @@ fn decimal_part(i: &str) -> IResult<&str, (&str, Option<i32>, char)> {
     preceded(
         tag("."),
         map(
-             tuple((incomplete_or_else(digit0, || ""), num_exponent_suffix)),
+            tuple((incomplete_or_else(digit0, || ""), num_exponent_suffix)),
             |(decimal, (exp, suffix))| (decimal, Some(exp.unwrap_or_default()), suffix),
         ),
     )(i)
@@ -109,14 +109,52 @@ fn literal(i: &str) -> IResult<&str, Literal> {
     )))(i)
 }
 
+static SPACES: phf::Set<char> = phf::phf_set! {
+    '\u{0020}',
+    '\u{0009}',
+    '\u{000a}',
+    '\u{000b}',
+    '\u{000c}',
+    '\u{000d}',
+    '\u{0085}',
+    '\u{200f}',
+    '\u{2028}',
+    '\u{2029}'
+};
+
 fn is_space(c: char) -> bool {
-    "\u{0020}\u{0009}\u{000a}\u{000b}\u{000c}\u{000d}\u{0085}\u{200f}\u{2028}\u{2029}"
-        .chars()
-        .any(|v| v == c)
+    SPACES.contains(&c)
 }
 
 fn space(input: &str) -> IResult<&str, &str> {
     take_while(is_space)(input)
+}
+
+pub fn space0<T, E: nom::error::ParseError<T>>(input: T) -> IResult<T, T, E>
+where
+    T: nom::InputTakeAtPosition,
+    <T as nom::InputTakeAtPosition>::Item: nom::AsChar + Clone,
+{
+    use nom::AsChar;
+    input.split_at_position_complete(|item| {
+        let c = item.as_char();
+        !is_space(c)
+    })
+}
+
+pub fn space1<T, E: nom::error::ParseError<T>>(input: T) -> IResult<T, T, E>
+where
+    T: nom::InputTakeAtPosition,
+    <T as nom::InputTakeAtPosition>::Item: nom::AsChar + Clone,
+{
+    use nom::AsChar;
+    input.split_at_position1_complete(
+        |item| {
+            let c = item.as_char();
+            !is_space(c)
+        },
+        nom::error::ErrorKind::Space,
+    )
 }
 
 fn is_failure<I>(e: nom::Err<nom::error::Error<I>>) -> bool {
@@ -134,21 +172,21 @@ fn is_error<I>(e: nom::Err<nom::error::Error<I>>) -> bool {
 }
 
 fn keyword(i: &str) -> IResult<&str, Keyword> {
-    Keyword::try_from(i).map_err(|_| {
-        let e: nom::error::Error<&str> = make_error(i, ErrorKind::Alpha);
-        nom::Err::Error(e)
-    }).map(|v| {
-        ("", v)
-    })
+    Keyword::try_from(i)
+        .map_err(|_| {
+            let e: nom::error::Error<&str> = make_error(i, ErrorKind::Alpha);
+            nom::Err::Error(e)
+        })
+        .map(|v| ("", v))
 }
 
 fn reserved_keyword(i: &str) -> IResult<&str, ReservedWord> {
-    ReservedWord::try_from(i).map_err(|_| {
-        let e: nom::error::Error<&str> = make_error(i, ErrorKind::Alpha);
-        nom::Err::Error(e)
-    }).map(|v| {
-        ("", v)
-    })
+    ReservedWord::try_from(i)
+        .map_err(|_| {
+            let e: nom::error::Error<&str> = make_error(i, ErrorKind::Alpha);
+            nom::Err::Error(e)
+        })
+        .map(|v| ("", v))
 }
 
 fn check_identifier(mut chars: Chars, start: char) -> bool {
@@ -180,6 +218,36 @@ fn is_identifier(i: &str) -> bool {
     }
 }
 
+fn identifier2(i: &str) -> IResult<&str, &str> {
+    map_opt::<&str, _, _, _, _, _>(
+        tuple((
+            satisfy(unicode_ident::is_xid_start),
+            take_while(unicode_ident::is_xid_continue),
+        )),
+        |(start, continues)| Some(&i[..(1 + continues.len())]),
+    )(i)
+}
+
+fn identifier(i: &str) -> IResult<&str, &str> {
+    map_opt(
+        tuple((opt(nom::character::complete::char('_')), identifier2)),
+        |(prefix, ident)| {
+            Some(if prefix.is_some() {
+                &i[..(1 + ident.len())]
+            } else {
+                ident
+            })
+        },
+    )(i)
+}
+
+fn enable_directive(i: &str) -> IResult<&str, &str> {
+    delimited(
+        tag("enable"),
+        delimited(space1, identifier, space0),
+        tag(";"),
+    )(i)
+}
 
 #[cfg(test)]
 pub mod tests {
@@ -203,6 +271,13 @@ pub mod tests {
     }
 
     #[test]
+    fn directive_test() {
+        assert_ret!(enable_directive("enable f16;"), "f16");
+        assert_ret!(enable_directive("enable   aka ;"), "aka");
+        assert_error!(enable_directive("enableaka;"));
+    }
+
+    #[test]
     fn ident_test() {
         assert!(is_identifier("_norm"));
         assert!(is_identifier("_a404"));
@@ -214,6 +289,13 @@ pub mod tests {
         assert!(!is_identifier("_0a"));
         assert!(!is_identifier("4"));
         assert!(!is_identifier("4dd"));
+
+        assert_ret!(identifier("abc_1"), "abc_1");
+        assert_ret!(identifier("abc_1;"), "abc_1");
+        assert_ret!(identifier("_abc_1;"), "_abc_1");
+        assert_error!(identifier("_;"));
+        assert_error!(identifier("__;"));
+        assert_error!(identifier("1;"));
     }
 
     #[test]
@@ -261,12 +343,27 @@ pub mod tests {
         assert_ret!(literal("1e+3"), Literal::Float(Float::Abstract(1000f64)));
 
         // todo: float hex
-        assert_ret!(literal("0xa.fp+2"), Literal::Float(Float::Abstract(hexf::hexf64!("0xa.fp+2"))));
-        assert_ret!(literal("0x1P+4f"), Literal::Float(Float::F32(hexf::hexf32!("0x1P+4"))));
+        assert_ret!(
+            literal("0xa.fp+2"),
+            Literal::Float(Float::Abstract(hexf::hexf64!("0xa.fp+2")))
+        );
+        assert_ret!(
+            literal("0x1P+4f"),
+            Literal::Float(Float::F32(hexf::hexf32!("0x1P+4")))
+        );
         // assert_ret!(literal("0X.3"), Literal::Float(Float::Abstract(hexf::hexf64!("0X.3"))));
-        assert_ret!(literal("0x3p+2h"), Literal::Float(Float::F16(hexf::hexf32!("0x3p+2"))));
-        assert_ret!(literal("0x1.fp-4"), Literal::Float(Float::Abstract(hexf::hexf64!("0x1.fp-4"))));
-        assert_ret!(literal("0x3.2p+2h"), Literal::Float(Float::F16(hexf::hexf32!("0x3.2p+2"))));
+        assert_ret!(
+            literal("0x3p+2h"),
+            Literal::Float(Float::F16(hexf::hexf32!("0x3p+2")))
+        );
+        assert_ret!(
+            literal("0x1.fp-4"),
+            Literal::Float(Float::Abstract(hexf::hexf64!("0x1.fp-4")))
+        );
+        assert_ret!(
+            literal("0x3.2p+2h"),
+            Literal::Float(Float::F16(hexf::hexf32!("0x3.2p+2")))
+        );
 
         assert_error!(literal("ccv"));
     }

@@ -10,4 +10,6 @@ nom = "7"
 hexf = "0.2"
 unicode-ident = "1"
 strum = { version = "0.24", features = ["derive", "phf"] }
+thiserror = "1.0.38"
+phf = { version = "0.11", features = ["macros"] }
 

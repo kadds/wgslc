@@ -1,4 +1,4 @@
-use super::token::{Literal, Float, Integer};
+use super::token::{Float, Integer, Literal};
 
 pub fn parse_num_from(
     digit: &str,
@@ -16,9 +16,7 @@ pub fn parse_num_from(
     if suffix == 'f' || suffix == 'h' || exp.is_some() {
         // float
         let digit: u32 = digit.parse::<u32>().ok()?;
-        let decimal = decimal
-            .parse::<u32>()
-            .ok()?;
+        let decimal = decimal.parse::<u32>().ok()?;
 
         let val = digit * 10u32.pow(bits as u32) + decimal;
         let exp = exp.unwrap() - bits as i32;

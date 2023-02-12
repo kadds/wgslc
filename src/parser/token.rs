@@ -344,7 +344,6 @@ pub enum BuiltinValue {
     SampleMask,
 }
 
-
 #[derive(Debug, Clone, Copy, Display, EnumIter, EnumString)]
 #[repr(u32)]
 #[strum(serialize_all = "snake_case", use_phf)]
@@ -387,7 +386,6 @@ pub enum TexelFormat {
     Rgba32float,
     Bgra8unorm,
 }
-
 
 #[derive(Debug, Clone, Copy, Display, EnumIter, EnumString)]
 #[repr(u32)]
