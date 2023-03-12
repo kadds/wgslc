@@ -127,6 +127,7 @@ pub enum ReservedWord {
     #[strum(serialize = "HullShader")]
     Hullshader,
     #[strum(serialize = "NULL")]
+    #[warn(clippy::upper_case_acronyms)]
     NULL,
     #[strum(serialize = "Self")]
     SSelf,
@@ -495,6 +496,53 @@ pub enum SynToken {
 impl SynToken {
     pub fn max_chars() -> usize {
         3
+    }
+}
+
+#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString, PartialEq, Eq)]
+#[repr(u32)]
+#[strum(serialize_all = "snake_case", use_phf)]
+pub enum AttributeType {
+    Align,
+    Binding,
+    Builtin,
+    Const,
+    Diagnostic,
+    Group,
+    Id,
+    Interpolate,
+    Invariant,
+    Location,
+    MustUse,
+    Size,
+    WorkgroupSize,
+    Vertex,
+    Fragment,
+    Compute,
+}
+impl AttributeType {
+    pub fn min_chars() -> usize {
+        2
+    }
+    pub fn max_chars() -> usize {
+        13
+    }
+
+    pub fn is_extendable(&self) -> bool {
+        match self {
+            AttributeType::Align => (),
+            AttributeType::Binding => (),
+            AttributeType::Builtin => (),
+            AttributeType::Diagnostic => (),
+            AttributeType::Group => (),
+            AttributeType::Id => (),
+            AttributeType::Interpolate => (),
+            AttributeType::Location => (),
+            AttributeType::Size => (),
+            AttributeType::WorkgroupSize => (),
+            _ => return false,
+        };
+        return true;
     }
 }
 

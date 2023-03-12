@@ -1,8 +1,8 @@
-use std::ops::RangeFrom;
+use std::{collections::HashMap, marker::PhantomData, ops::RangeFrom};
 
-use nom::IResult;
+use nom::{multi::separated_list1, sequence::terminated, IResult};
 
-use self::ast::Ast;
+use self::{ast::Ast, token::AttributeType};
 mod ast;
 mod lex;
 mod number;
@@ -43,32 +43,197 @@ where
     }
 }
 
+pub fn separated_list1_ext_sep<I, O, O2, E, F, G>(
+    mut sep: G,
+    mut f: F,
+) -> impl FnMut(I) -> IResult<I, Vec<O>, E>
+where
+    I: Clone + nom::InputLength,
+    F: nom::Parser<I, O, E>,
+    G: nom::Parser<I, O2, E>,
+    E: nom::error::ParseError<I>,
+{
+    move |mut i: I| {
+        let mut res = Vec::new();
+
+        // Parse the first element
+        match f.parse(i.clone()) {
+            Err(e) => return Err(e),
+            Ok((i1, o)) => {
+                res.push(o);
+                i = i1;
+            }
+        }
+
+        loop {
+            let len = i.input_len();
+            match sep.parse(i.clone()) {
+                Err(nom::Err::Error(_)) => return Ok((i, res)),
+                Err(e) => return Err(e),
+                Ok((i1, _)) => {
+                    // infinite loop check: the parser must always consume
+                    if i1.input_len() == len {
+                        return Err(nom::Err::Error(E::from_error_kind(
+                            i1,
+                            nom::error::ErrorKind::SeparatedList,
+                        )));
+                    }
+
+                    match f.parse(i1.clone()) {
+                        Err(nom::Err::Failure(f)) => return Err(nom::Err::Failure(f)),
+                        Err(_) => return Ok((i1, res)),
+                        Ok((i2, o)) => {
+                            res.push(o);
+                            i = i2;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("parse")]
     Parse,
 }
 
-pub struct VarDecl {}
-pub struct ConstDecl {}
+// pub enum BasicType {
+//     Bool,
+//     F32,
+//     F16,
+//     I32,
+//     U32,
+// }
 
-pub struct StructDecl {}
+#[derive(Debug, PartialEq, Eq)]
+pub struct Attribute<'a> {
+    ty: AttributeType,
+    expr: Option<Expression<'a>>,
+    diagnostic_control: Option<()>,
+}
 
-pub struct FnDecl {}
+#[derive(Debug, PartialEq, Eq, Default)]
+pub struct TemplateList<'a> {
+    vars: Vec<&'a str>,
+}
 
-pub struct TypeAliasDecl {}
+#[derive(Debug, PartialEq, Eq)]
+pub enum Ty<'a> {
+    Ident(&'a str),
+    TemplateIdent((&'a str, TemplateList<'a>)),
+    None,
+}
 
-pub struct ConstAssertStatement {}
+impl<'a> Default for Ty<'a> {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Default)]
+pub struct StructMember<'a> {
+    ident: &'a str,
+    ty: Ty<'a>,
+    attrs: Vec<Attribute<'a>>,
+}
+
+#[derive(Debug, PartialEq, Eq, Default)]
+pub struct StructDecl<'a> {
+    name: &'a str,
+    members: Vec<StructMember<'a>>,
+}
+
+#[derive(Debug, PartialEq, Eq, Default)]
+pub struct Param<'a> {
+    name: &'a str,
+    ty: Ty<'a>,
+}
+
+#[derive(Debug, PartialEq, Eq, Default)]
+pub struct Statement<'a> {
+    pd: PhantomData<&'a ()>,
+}
+
+#[derive(Debug, PartialEq, Eq, Default)]
+pub struct FunctionDecl<'a> {
+    name: &'a str,
+    inputs: Vec<Param<'a>>,
+    output: Option<(Vec<Attribute<'a>>, Ty<'a>)>,
+    ast: Option<()>,
+    attrs: Vec<Attribute<'a>>,
+}
+
+#[derive(Debug, PartialEq, Eq, Default)]
+pub struct TypeAliasDecl<'a> {
+    name: &'a str,
+    ty: Ty<'a>,
+}
+
+#[derive(Debug, PartialEq, Eq, Default)]
+pub struct Expression<'a> {
+    _pd: PhantomData<&'a ()>,
+}
+
+#[derive(Debug, PartialEq, Eq, Default)]
+pub struct OptionallyTypedIdent<'a> {
+    name: &'a str,
+    ty: Option<Ty<'a>>,
+}
+
+#[derive(Debug, PartialEq, Eq, Default)]
+pub struct GlobalVariableDecl<'a> {
+    template_list: Option<TemplateList<'a>>,
+    ident: OptionallyTypedIdent<'a>,
+    equals: Option<Expression<'a>>,
+    attrs: Vec<Attribute<'a>>,
+}
+
+#[derive(Debug, PartialEq, Eq, Default)]
+pub struct GlobalOverrideValueDecl<'a> {
+    ident: OptionallyTypedIdent<'a>,
+    equals: Option<Expression<'a>>,
+    attrs: Vec<Attribute<'a>>,
+}
+
+#[derive(Debug, PartialEq, Eq, Default)]
+pub struct GlobalConstValueDecl<'a> {
+    ident: OptionallyTypedIdent<'a>,
+    equals: Option<Expression<'a>>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum GlobalValueDecl<'a> {
+    GlobalOverrideValueDecl(GlobalOverrideValueDecl<'a>),
+    GlobalConstValueDecl(GlobalConstValueDecl<'a>),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ConstAssertStatement<'a> {
+    expr: Expression<'a>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct CompoundStatement<'a> {
+    attrs: Vec<Attribute<'a>>,
+    statements: Vec<Statement<'a>>,
+}
 
 #[derive(Default)]
 pub struct ParseResult<'a> {
     global_enables: Vec<&'a str>,
-    var_decl: Vec<VarDecl>,
-    const_decl: Vec<ConstDecl>,
-    struct_decl: Vec<StructDecl>,
-    fn_decl: Vec<FnDecl>,
-    type_decl: Vec<TypeAliasDecl>,
-    const_assert_statement: Vec<ConstAssertStatement>,
+    decls: Vec<GlobalDecl<'a>>,
+}
+
+pub enum GlobalDecl<'a> {
+    GlobalVariableDecl(GlobalVariableDecl<'a>),
+    GlobalValueDecl(GlobalValueDecl<'a>),
+    TypeAliasDecl(TypeAliasDecl<'a>),
+    StructDecl(StructDecl<'a>),
+    FunctionDecl(FunctionDecl<'a>),
+    ConstAssertStatement(ConstAssertStatement<'a>),
+    None,
 }
 
 pub struct Parser<'a> {
