@@ -1,8 +1,8 @@
-use std::{collections::HashMap, marker::PhantomData, ops::RangeFrom};
+use std::{marker::PhantomData, ops::RangeFrom};
 
-use nom::{multi::separated_list1, sequence::terminated, IResult};
+use nom::{sequence::terminated, IResult};
 
-use self::{ast::Ast, token::AttributeType};
+
 mod ast;
 mod lex;
 mod number;
@@ -107,135 +107,6 @@ pub enum Error {
 //     U32,
 // }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct Attribute<'a> {
-    ty: AttributeType,
-    expr: Option<Expression<'a>>,
-    diagnostic_control: Option<()>,
-}
-
-#[derive(Debug, PartialEq, Eq, Default)]
-pub struct TemplateList<'a> {
-    vars: Vec<&'a str>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum Ty<'a> {
-    Ident(&'a str),
-    TemplateIdent((&'a str, TemplateList<'a>)),
-    None,
-}
-
-impl<'a> Default for Ty<'a> {
-    fn default() -> Self {
-        Self::None
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Default)]
-pub struct StructMember<'a> {
-    ident: &'a str,
-    ty: Ty<'a>,
-    attrs: Vec<Attribute<'a>>,
-}
-
-#[derive(Debug, PartialEq, Eq, Default)]
-pub struct StructDecl<'a> {
-    name: &'a str,
-    members: Vec<StructMember<'a>>,
-}
-
-#[derive(Debug, PartialEq, Eq, Default)]
-pub struct Param<'a> {
-    name: &'a str,
-    ty: Ty<'a>,
-}
-
-#[derive(Debug, PartialEq, Eq, Default)]
-pub struct Statement<'a> {
-    pd: PhantomData<&'a ()>,
-}
-
-#[derive(Debug, PartialEq, Eq, Default)]
-pub struct FunctionDecl<'a> {
-    name: &'a str,
-    inputs: Vec<Param<'a>>,
-    output: Option<(Vec<Attribute<'a>>, Ty<'a>)>,
-    ast: Option<()>,
-    attrs: Vec<Attribute<'a>>,
-}
-
-#[derive(Debug, PartialEq, Eq, Default)]
-pub struct TypeAliasDecl<'a> {
-    name: &'a str,
-    ty: Ty<'a>,
-}
-
-#[derive(Debug, PartialEq, Eq, Default)]
-pub struct Expression<'a> {
-    _pd: PhantomData<&'a ()>,
-}
-
-#[derive(Debug, PartialEq, Eq, Default)]
-pub struct OptionallyTypedIdent<'a> {
-    name: &'a str,
-    ty: Option<Ty<'a>>,
-}
-
-#[derive(Debug, PartialEq, Eq, Default)]
-pub struct GlobalVariableDecl<'a> {
-    template_list: Option<TemplateList<'a>>,
-    ident: OptionallyTypedIdent<'a>,
-    equals: Option<Expression<'a>>,
-    attrs: Vec<Attribute<'a>>,
-}
-
-#[derive(Debug, PartialEq, Eq, Default)]
-pub struct GlobalOverrideValueDecl<'a> {
-    ident: OptionallyTypedIdent<'a>,
-    equals: Option<Expression<'a>>,
-    attrs: Vec<Attribute<'a>>,
-}
-
-#[derive(Debug, PartialEq, Eq, Default)]
-pub struct GlobalConstValueDecl<'a> {
-    ident: OptionallyTypedIdent<'a>,
-    equals: Option<Expression<'a>>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum GlobalValueDecl<'a> {
-    GlobalOverrideValueDecl(GlobalOverrideValueDecl<'a>),
-    GlobalConstValueDecl(GlobalConstValueDecl<'a>),
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct ConstAssertStatement<'a> {
-    expr: Expression<'a>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct CompoundStatement<'a> {
-    attrs: Vec<Attribute<'a>>,
-    statements: Vec<Statement<'a>>,
-}
-
-#[derive(Default)]
-pub struct ParseResult<'a> {
-    global_enables: Vec<&'a str>,
-    decls: Vec<GlobalDecl<'a>>,
-}
-
-pub enum GlobalDecl<'a> {
-    GlobalVariableDecl(GlobalVariableDecl<'a>),
-    GlobalValueDecl(GlobalValueDecl<'a>),
-    TypeAliasDecl(TypeAliasDecl<'a>),
-    StructDecl(StructDecl<'a>),
-    FunctionDecl(FunctionDecl<'a>),
-    ConstAssertStatement(ConstAssertStatement<'a>),
-    None,
-}
-
 pub struct Parser<'a> {
     input: &'a str,
 }
@@ -244,8 +115,8 @@ impl<'a> Parser<'a> {
     pub fn new(str: &'a str) -> Self {
         Self { input: str }
     }
-    pub fn parse(&self) -> Result<ParseResult, Error> {
-        let mut ret = ParseResult::default();
+    pub fn parse(&self) -> Result<ast::ParseResult, Error> {
+        let ret = ast::ParseResult::default();
         // try global directive first
 
         // try global decl

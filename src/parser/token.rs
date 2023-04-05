@@ -1,21 +1,37 @@
-use std::collections::HashMap;
+
 use strum::*;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Eq)]
 pub enum Integer {
     I(i32),
     U(u32),
     Abstract(i64),
 }
 
-#[derive(Debug, PartialEq)]
+impl From<Integer> for Literal {
+    fn from(value: Integer) -> Self {
+        Literal::Integer(value)
+    }
+}
+impl From<bool> for Literal {
+    fn from(value: bool) -> Self {
+        Literal::Bool(value)
+    }
+}
+impl From<Float> for Literal {
+    fn from(value: Float) -> Self {
+        Literal::Float(value)
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum Float {
     F32(f32),
     F16(f32),
     Abstract(f64),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Literal {
     Bool(bool),
     Integer(Integer),
@@ -395,7 +411,7 @@ pub enum Extension {
     F16,
 }
 
-#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString)]
+#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString, PartialEq, Eq)]
 #[repr(u32)]
 #[strum(serialize_all = "snake_case", use_phf)]
 pub enum SynToken {
@@ -542,7 +558,7 @@ impl AttributeType {
             AttributeType::WorkgroupSize => (),
             _ => return false,
         };
-        return true;
+        true
     }
 }
 

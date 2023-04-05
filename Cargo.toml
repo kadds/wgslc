@@ -1,5 +1,5 @@
 [package]
-name = "wgsl-lang-pp"
+name = "wgslc"
 version = "0.1.0"
 edition = "2021"
 
@@ -12,4 +12,11 @@ unicode-ident = "1"
 strum = { version = "0.24", features = ["derive", "phf"] }
 thiserror = "1.0.38"
 phf = { version = "0.11", features = ["macros"] }
+log = "0.4"
+test-log = "0.2.11"
+enums_arena = "0.1.4"
+enums_arena_defines = "0.1"
 
+[dev-dependencies]
+env_logger = "0.10.0"
+pretty_assertions = "1.3"
