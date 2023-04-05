@@ -7,6 +7,7 @@ use super::*;
 use nom::bytes::complete::take_till;
 use nom::character::complete::{char as xchar, one_of};
 use nom::combinator::consumed;
+use nom::combinator::peek;
 use nom::combinator::recognize;
 use nom::multi::{many0, many1, many_m_n};
 use nom::{
@@ -304,7 +305,7 @@ fn component_or_swizzle_specifier(i: &str) -> IResult<&str, ExprId> {
             ),
             map_opt(
                 tuple((
-                    delimited(xchar('['), lspace0(rspace0(expr)), xchar(']')),
+                    delimited(lspace0(xchar('[')), lspace0(expr), lspace0(xchar(']'))),
                     opt(component_or_swizzle_specifier),
                 )),
                 |(index, postfix)| {
@@ -328,7 +329,7 @@ fn primary_expr(i: &str) -> IResult<&str, ExprId> {
         alt((
             map_opt(
                 tuple((
-                    identifier,
+                    lspace0(identifier),
                     opt(template_list),
                     opt(delimited(
                         lspace0(xchar('(')),
@@ -349,10 +350,10 @@ fn primary_expr(i: &str) -> IResult<&str, ExprId> {
                 },
             ),
             map_opt(
-                delimited(lspace0(xchar('(')), expr, lspace0(xchar(')'))),
-                |v| Some(ParenExpression::new_paren(Some(v)).into()),
+                delimited(lspace0(xchar('(')), lspace0(expr), lspace0(xchar(')'))),
+                |v| Some(ParenExpression::new_paren(v).into()),
             ),
-            map_opt(consumed(literal), |(l, r)| {
+            map_opt(lspace0(consumed(literal)), |(l, r)| {
                 Some(LiteralExpression::new(r, l).into())
             }),
         )),
@@ -392,22 +393,21 @@ fn bitwise_expression_post_unary_expr(i: &str) -> IResult<&str, PartialExprId> {
     dbg(
         map_opt(
             alt((
-                many1(lspace0(tuple((tag("&"), lspace0(unary_expr))))),
-                many1(lspace0(tuple((tag("^"), lspace0(unary_expr))))),
-                many1(lspace0(tuple((tag("|"), lspace0(unary_expr))))),
+                many1(tuple((lspace0(tag("&")), lspace0(unary_expr)))),
+                many1(tuple((lspace0(tag("^")), lspace0(unary_expr)))),
+                many1(tuple((lspace0(tag("|")), lspace0(unary_expr)))),
             )),
-            |_res| {
-                // let mut prev = None;
-                // for (op, expr) in res {
-                //     let p = if let Some(prev) = prev {
-                //         BinaryExpression::new(prev, SynToken::from_str(op).unwrap(), expr).into()
-                //     } else {
-                //         expr
-                //     };
-                //     prev = Some(p);
-                // }
-                // Some(prev.unwrap())
-                Some(PartialExprId::new_empty())
+            |res| {
+                let mut prev = placement_expr_id();
+                let mut partial = placement_expr_id();
+                for (op, expr) in res {
+                    let p = BinaryExpression::new(prev, SynToken::from_str(op).ok()?, expr).into();
+                    if partial == placement_expr_id() {
+                        partial = p;
+                    }
+                    prev = p;
+                }
+                Some(PartialExprId { top: prev, partial })
             },
         ),
         "bitwise_expression_post_unary_expression",
@@ -487,12 +487,12 @@ fn relational_expression_post_unary_expr(i: &str) -> IResult<&str, PartialExprId
                 shift_expression_post_unary_expr,
                 opt(tuple((
                     lspace0(alt((
-                        tag(">"),
-                        tag(">="),
-                        tag("<"),
-                        tag("<="),
                         tag("!="),
                         tag("=="),
+                        tag(">="),
+                        tag("<="),
+                        tag(">"),
+                        tag("<"),
                     ))),
                     unary_expr,
                     shift_expression_post_unary_expr,
@@ -526,43 +526,73 @@ fn expr(i: &str) -> IResult<&str, ExprId> {
             tuple((
                 unary_expr,
                 alt((
-                    bitwise_expression_post_unary_expr,
                     map_opt(
                         tuple((
                             relational_expression_post_unary_expr,
-                            opt(alt((
+                            opt(lspace0(alt((
                                 preceded(
-                                    recognize(tag("&&")),
+                                    peek(tag("&&")),
                                     many1(tuple((
-                                        tag("&&"),
-                                        unary_expr,
-                                        relational_expression_post_unary_expr,
+                                        lspace0(tag("&&")),
+                                        lspace0(unary_expr),
+                                        lspace0(relational_expression_post_unary_expr),
                                     ))),
                                 ),
                                 preceded(
-                                    recognize(tag("||")),
+                                    peek(tag("||")),
                                     many1(tuple((
-                                        tag("||"),
-                                        unary_expr,
-                                        relational_expression_post_unary_expr,
+                                        lspace0(tag("||")),
+                                        lspace0(unary_expr),
+                                        lspace0(relational_expression_post_unary_expr),
                                     ))),
                                 ),
-                            ))),
+                            )))),
                         )),
                         |(r, extends)| {
-                            log::info!("expr relate {:?} {:?}", r, extends);
+                            if r.is_empty() && extends.is_none() {
+                                return None;
+                            }
+                            log::error!("dsfsdfsdf  {:#?}  \n {:#?}", r, extends);
+                            if let Some(extends) = extends {
+                                let mut partial = r.partial;
+                                let mut prev_expr = r.top;
+                                for (tag, l, relate) in extends {
+                                    let op = SynToken::from_str(tag).ok()?;
+                                    let expr = if relate.is_empty() {
+                                        BinaryExpression::new(prev_expr, op, l)
+                                    } else {
+                                        update_expr_for(
+                                            relate.partial,
+                                            |expr: &mut BinaryExpression| {
+                                                expr.left = l;
+                                            },
+                                        );
+                                        BinaryExpression::new(prev_expr, op, relate.top)
+                                    }
+                                    .into();
+                                    if prev_expr == placement_expr_id() {
+                                        partial = expr;
+                                    }
+                                    prev_expr = expr;
+                                }
+                                return Some(PartialExprId {
+                                    top: prev_expr,
+                                    partial,
+                                });
+                            }
                             Some(r)
                         },
                     ),
+                    bitwise_expression_post_unary_expr,
+                    map_opt(tag(""), |_| Some(PartialExprId::new_empty())),
                 )),
             )),
             |(u, e)| {
                 if !e.is_empty() {
-                    log::info!("rest eeee {:?}", e);
+                    log::info!("extend expr {:#?}", e);
                     let ret = update_expr_for(e.partial, |expr: &mut BinaryExpression| {
                         expr.left = u;
                     });
-                    log::info!("rest {:?} {:?}", u, e.top);
                     if let Some(()) = ret {
                         return Some(e.top);
                     }
@@ -592,7 +622,7 @@ fn template_list(i: &str) -> IResult<&str, ExprId> {
             // //         left:
             // //     }
             // // }
-            Some(ParenExpression::new_angle(None).into())
+            Some(ParenExpression::new_empty(SynToken::LessThan).into())
         },
     )(i)
 }
@@ -907,7 +937,7 @@ fn global_decl(i: &str) -> IResult<&str, GlobalDecl<'_>> {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use pretty_assertions::{assert_eq};
+    use pretty_assertions::assert_eq;
     use test_log::test;
     macro_rules! assert_ret {
         ($left: expr, $right: expr) => {
@@ -957,15 +987,6 @@ pub mod tests {
         );
 
         assert_ret!(
-            expr("!1"),
-            UnaryExpression::new(
-                SynToken::Bang,
-                LiteralExpression::new(Integer::Abstract(1).into(), "1")
-            )
-            .into()
-        );
-
-        assert_ret!(
             expr("a-b*c+d"),
             BinaryExpression::new(
                 BinaryExpression::new(
@@ -996,6 +1017,117 @@ pub mod tests {
                     IdentExpression::new_ident("f").into(),
                     &[LiteralExpression::new(Integer::Abstract(1).into(), "1").into()]
                 )
+            )
+            .into()
+        );
+    }
+
+    #[test]
+    fn expr_unary_test() {
+        assert_ret!(
+            expr("!a"),
+            UnaryExpression::new(SynToken::Bang, IdentExpression::new_ident("a")).into()
+        );
+
+        assert_ret!(
+            expr("-a"),
+            UnaryExpression::new(SynToken::Minus, IdentExpression::new_ident("a")).into()
+        );
+    }
+
+    #[test]
+    fn expr_logical_compare_test() {
+        assert_ret!(
+            expr("a<=b"),
+            BinaryExpression::new(
+                IdentExpression::new_ident("a"),
+                SynToken::LessThanEqual,
+                IdentExpression::new_ident("b")
+            )
+            .into()
+        );
+
+        assert_ret!(
+            expr("a==b&&c>d"),
+            BinaryExpression::new(
+                BinaryExpression::new(
+                    IdentExpression::new_ident("a"),
+                    SynToken::EqualEqual,
+                    IdentExpression::new_ident("b")
+                ),
+                SynToken::AndAnd,
+                BinaryExpression::new(
+                    IdentExpression::new_ident("c"),
+                    SynToken::GreaterThan,
+                    IdentExpression::new_ident("d")
+                ),
+            )
+            .into()
+        );
+    }
+
+    #[test]
+    fn expr_logical_test() {
+        assert_ret!(
+            expr("a&&d&&e"),
+            BinaryExpression::new(
+                BinaryExpression::new(
+                    IdentExpression::new_ident("a"),
+                    SynToken::AndAnd,
+                    IdentExpression::new_ident("d")
+                ),
+                SynToken::AndAnd,
+                IdentExpression::new_ident("e")
+            )
+            .into()
+        );
+
+        assert_ret!(
+            expr("a||(d&&e)"),
+            BinaryExpression::new(
+                IdentExpression::new_ident("a"),
+                SynToken::OrOr,
+                ParenExpression::new_paren(BinaryExpression::new(
+                    IdentExpression::new_ident("d"),
+                    SynToken::AndAnd,
+                    IdentExpression::new_ident("e")
+                ))
+            )
+            .into()
+        );
+
+        assert_ret!(
+            expr("a||((b||c)&&d)"),
+            BinaryExpression::new(
+                IdentExpression::new_ident("a"),
+                SynToken::OrOr,
+                ParenExpression::new_paren(BinaryExpression::new(
+                    ParenExpression::new_paren(BinaryExpression::new(
+                        IdentExpression::new_ident("b"),
+                        SynToken::OrOr,
+                        IdentExpression::new_ident("c"),
+                    ),),
+                    SynToken::AndAnd,
+                    IdentExpression::new_ident("d")
+                ))
+            )
+            .into()
+        );
+
+        assert_ret!(
+            expr("x&(y^(z|w))"),
+            BinaryExpression::new(
+                IdentExpression::new_ident("x"),
+                SynToken::And,
+                ParenExpression::new_paren(BinaryExpression::new(
+                    IdentExpression::new_ident("y"),
+                    SynToken::Xor,
+                    ParenExpression::new_paren(BinaryExpression::new(
+                        IdentExpression::new_ident("z"),
+                        SynToken::Or,
+                        IdentExpression::new_ident("w")
+                    ))
+                ))
             )
             .into()
         );
@@ -1053,11 +1185,11 @@ pub mod tests {
             }
         );
     }
+
     #[test]
     fn global_value_decl_test() {
-        let ret = global_const_value_decl("const b : i32 = 4");
         assert_ret!(
-            ret,
+            global_const_value_decl("const b : i32 = 4"),
             GlobalConstValueDecl {
                 ident: OptionallyTypedIdent {
                     name: "b",

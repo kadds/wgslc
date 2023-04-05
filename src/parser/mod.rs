@@ -2,7 +2,6 @@ use std::{marker::PhantomData, ops::RangeFrom};
 
 use nom::{sequence::terminated, IResult};
 
-
 mod ast;
 mod lex;
 mod number;

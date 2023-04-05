@@ -67,11 +67,10 @@ impl PartialExprId {
     pub fn new_empty() -> Self {
         Self {
             top: placement_expr_id(),
-            partial:placement_expr_id(),
+            partial: placement_expr_id(),
         }
     }
 }
-
 
 pub trait Expr<'a>: Clone {
     fn enum_expr(self) -> Expression<'a>;
@@ -254,7 +253,7 @@ impl<'a> PartialEq for LiteralExpression<'a> {
     }
 }
 
-impl<'a> Eq for LiteralExpression<'a>{}
+impl<'a> Eq for LiteralExpression<'a> {}
 
 use_expr_fn!(LiteralExpression);
 
@@ -343,33 +342,48 @@ pub struct ParenExpression<'a> {
 use_expr_fn!(ParenExpression);
 
 impl<'a> ParenExpression<'a> {
-    pub fn new_paren(inner: Option<ExprId>) -> Self {
+    pub fn new_empty(l: SynToken) -> Self {
+        let r = match l {
+            SynToken::BracketLeft => SynToken::BracketRight,
+            SynToken::BraceLeft => SynToken::BraceRight,
+            SynToken::ParenLeft => SynToken::ParenRight,
+            SynToken::LessThan => SynToken::GreaterThan,
+            _ => panic!(""),
+        };
         Self {
-            inner,
+            inner: None,
+            l,
+            r,
+            _pd: PhantomData::default(),
+        }
+    }
+    pub fn new_paren<E: Into<ExprId>>(inner: E) -> Self {
+        Self {
+            inner: Some(inner.into()),
             l: SynToken::ParenLeft,
             r: SynToken::ParenRight,
             _pd: PhantomData::default(),
         }
     }
-    pub fn new_bracket(inner: Option<ExprId>) -> Self {
+    pub fn new_bracket<E: Into<ExprId>>(inner: E) -> Self {
         Self {
-            inner,
+            inner: Some(inner.into()),
             l: SynToken::BracketLeft,
             r: SynToken::BracketRight,
             _pd: PhantomData::default(),
         }
     }
-    pub fn new_brace(inner: Option<ExprId>) -> Self {
+    pub fn new_brace<E: Into<ExprId>>(inner: E) -> Self {
         Self {
-            inner,
+            inner: Some(inner.into()),
             l: SynToken::BraceLeft,
             r: SynToken::BraceRight,
             _pd: PhantomData::default(),
         }
     }
-    pub fn new_angle(inner: Option<ExprId>) -> Self {
+    pub fn new_angle<E: Into<ExprId>>(inner: E) -> Self {
         Self {
-            inner,
+            inner: Some(inner.into()),
             l: SynToken::LessThan,
             r: SynToken::GreaterThan,
             _pd: PhantomData::default(),
@@ -440,6 +454,7 @@ pub struct Attribute<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[repr(u8)]
 pub enum Ty<'a> {
     Ident(&'a str),
     IdentTemplate((&'a str, ExprId)), // list of type
@@ -575,8 +590,6 @@ where
     }
 }
 
-
-
 // impl<'a, E> Node<'a> for E where E:Expr<'a> {
 //     fn visit<T:E>(&self, f: impl Fn(&T) -> bool) -> bool {
 //         let finish = f(self);
@@ -617,7 +630,7 @@ pub fn update_expr_for1<'a, E: Expr<'a>, F: FnOnce(&mut E) -> Option<()>>(
         let expr = get_expr(expr_id);
         let mut val = E::extract(&expr)?.clone();
         f(&mut val)?;
-        let val = unsafe {std::mem::transmute(val.enum_expr())};
+        let val = unsafe { std::mem::transmute(val.enum_expr()) };
 
         let mut c = ctx.0.borrow_mut();
         c.arena_mut().update(expr_id.into(), val)?;
@@ -625,15 +638,12 @@ pub fn update_expr_for1<'a, E: Expr<'a>, F: FnOnce(&mut E) -> Option<()>>(
     })
 }
 
-pub fn update_expr_for<'a, E: Expr<'a>, F: FnOnce(&mut E)>(
-    expr_id: ExprId,
-    f: F,
-) -> Option<()> {
+pub fn update_expr_for<'a, E: Expr<'a>, F: FnOnce(&mut E)>(expr_id: ExprId, f: F) -> Option<()> {
     CTX.with(|ctx| {
         let expr = get_expr(expr_id);
         let mut val = E::extract(&expr)?.clone();
         f(&mut val);
-        let val = unsafe {std::mem::transmute(val.enum_expr())};
+        let val = unsafe { std::mem::transmute(val.enum_expr()) };
 
         let mut c = ctx.0.borrow_mut();
         c.arena_mut().update(expr_id.into(), val)?;
