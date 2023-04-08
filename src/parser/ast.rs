@@ -446,11 +446,27 @@ pub struct CompoundStatement<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+pub struct AssignmentStatement<'a> {
+    pub lhs: ExprId,
+    pub rhs: ExprId,
+    pub _pd: PhantomData<&'a ()>,
+}
+
+impl<'a> AssignmentStatement<'a> {
+    pub fn new<E: Into<ExprId>, F: Into<ExprId>>(lhs: E, rhs: F) -> Self {
+        Self {
+            lhs: lhs.into(),
+            rhs: rhs.into(),
+            _pd: PhantomData::default(),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct Attribute<'a> {
     pub ty: AttributeType,
-    pub expr: Option<ExprId>,
-    pub diagnostic_control: Option<()>,
-    pub _pd: PhantomData<&'a ()>,
+    pub exprs: Vec<ExprId>,
+    pub diagnostic_control: Option<DiagnosticControl<'a>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -465,6 +481,12 @@ impl<'a> Default for Ty<'a> {
     fn default() -> Self {
         Self::None
     }
+}
+
+#[derive(Debug, PartialEq, Eq, Default)]
+pub struct DiagnosticControl<'a> {
+    pub name: &'a str,
+    pub ident: &'a str,
 }
 
 #[derive(Debug, PartialEq, Eq, Default)]

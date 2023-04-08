@@ -8,7 +8,6 @@ use super::*;
 use nom::bytes::complete::take_till;
 use nom::character::complete::{char as xchar, one_of};
 use nom::combinator::consumed;
-use nom::combinator::eof;
 use nom::combinator::peek;
 use nom::combinator::recognize;
 use nom::multi::{many0, many1, many_m_n};
@@ -757,27 +756,58 @@ fn function_header(i: &str) -> IResult<&str, FunctionDecl> {
     )(i)
 }
 
+fn diagnostic_control(i: &str) -> IResult<&str, DiagnosticControl> {
+    map_opt(
+        delimited(
+            lspace0(xchar('(')),
+            tuple((
+                lspace0(alt((tag("error"), tag("info"), tag("off"), tag("warning")))),
+                identifier,
+                opt(lspace0(xchar(','))),
+            )),
+            lspace0(xchar(')')),
+        ),
+        |(n, i, _)| Some(DiagnosticControl { name: n, ident: i }),
+    )(i)
+}
+
 fn attribute(i: &str) -> IResult<&str, Attribute<'_>> {
     let (rest, result) = preceded(xchar('@'), lspace0(identifier))(i)?;
     let attr = AttributeType::from_str(result).map_err(|_| {
         let e: nom::error::Error<&str> = make_error(i, ErrorKind::Alpha);
         nom::Err::Error(e)
     })?;
-    if attr.is_extendable() {
-        // if attr == AttributeType::Diagnostic {
-        //     Ok((rest, Attribute {ty: attr, diagnostic_control}))
+    if let Some((min, max)) = attr.extendable() {
+        if attr == AttributeType::Diagnostic {
+            let (rest, result) = diagnostic_control(rest)?;
+            return Ok((
+                rest,
+                Attribute {
+                    ty: attr,
+                    diagnostic_control: Some(result),
+                    exprs: vec![],
+                },
+            ));
+        }
         map_opt(
             delimited(
                 lspace0(xchar('(')),
-                terminated(expr, opt(lspace0(xchar(',')))),
-                lspace0(xchar(')')),
+                tuple((
+                    lspace0(expr),
+                    many_m_n(
+                        min - 1,
+                        max - 1,
+                        preceded(lspace0(xchar(',')), lspace0(expr)),
+                    ),
+                )),
+                tuple((opt(lspace0(xchar(','))), lspace0(xchar(')')))),
             ),
-            |expr| {
+            |(expr0, mut exprs)| {
+                exprs.insert(0, expr0);
                 Some(Attribute {
                     ty: attr,
-                    expr: Some(expr),
+                    exprs,
                     diagnostic_control: None,
-                    _pd: PhantomData::default(),
                 })
             },
         )(rest)
@@ -786,16 +816,15 @@ fn attribute(i: &str) -> IResult<&str, Attribute<'_>> {
             rest,
             Attribute {
                 ty: attr,
-                expr: None,
+                exprs: vec![],
                 diagnostic_control: None,
-                _pd: PhantomData::default(),
             },
         ))
     }
 }
 
 fn attributes(i: &str) -> IResult<&str, Vec<Attribute<'_>>> {
-    many0(attribute)(i)
+    many0(rspace1(attribute))(i)
 }
 
 fn statement(_i: &str) -> IResult<&str, Statement<'_>> {
@@ -845,14 +874,18 @@ fn comment(i: &str) -> IResult<&str, &str> {
     alt((line_comment, block_comment))(i)
 }
 
-fn compound_statement(i: &str) -> IResult<&str, CompoundStatement<'_>> {
+fn compound_statement(i: &str) -> IResult<&str, CompoundStatement> {
     map_opt(
         tuple((
-            many0(rspace1(attribute)),
+            lspace0(attributes),
             delimited(lspace0(xchar('{')), many0(statement), lspace0(xchar('}'))),
         )),
         |(attrs, statements)| Some(CompoundStatement { attrs, statements }),
     )(i)
+}
+
+fn assignment_statement(i: &str) -> IResult<&str, AssignmentStatement> {
+    todo!()
 }
 
 fn variable_decl(i: &str) -> IResult<&str, GlobalVariableDecl> {
@@ -876,7 +909,7 @@ fn variable_decl(i: &str) -> IResult<&str, GlobalVariableDecl> {
 fn global_override_value_decl(i: &str) -> IResult<&str, GlobalOverrideValueDecl> {
     map_opt(
         tuple((
-            many0(rspace1(attribute)),
+            lspace0(attributes),
             lspace0(tag("override")),
             lspace1(optionally_typed_ident),
             opt(preceded(lspace0(xchar('=')), lspace0(expr))),
@@ -912,7 +945,7 @@ fn global_const_value_decl(i: &str) -> IResult<&str, GlobalConstValueDecl> {
 fn global_variable_decl(i: &str) -> IResult<&str, GlobalVariableDecl> {
     map_opt(
         tuple((
-            many0(rspace1(attribute)),
+            lspace0(attributes),
             lspace0(variable_decl),
             opt(preceded(lspace0(xchar('=')), lspace0(expr))),
         )),
@@ -962,11 +995,7 @@ fn struct_decl(i: &str) -> IResult<&str, StructDecl> {
 
 fn function_decl(i: &str) -> IResult<&str, FunctionDecl> {
     map_opt(
-        tuple((
-            many0(rspace1(attribute)),
-            function_header,
-            compound_statement,
-        )),
+        tuple((attributes, function_header, compound_statement)),
         |(attrs, mut decl, _detail)| {
             decl.attrs = attrs;
             Some(decl)
@@ -1327,14 +1356,38 @@ pub mod tests {
         assert_ret!(comment("//test "), "test ");
         assert_ret!(comment("/*test*/"), "test");
         assert_ret!(comment("/*test/*a*/*/"), "test/*a*/");
-        assert!(comment(r#"/*
+        assert!(comment(
+            r#"/*
      This is a block comment
                 that spans lines.
                 /* Block comments can nest.
                  */
                 But all block comments must terminate.
                */
-        */"#).is_ok())
+        */"#
+        )
+        .is_ok())
+    }
+
+    #[test]
+    fn attribute_test() {
+        assert_ret!(
+            attribute("@const"),
+            Attribute {
+                ty: AttributeType::Const,
+                diagnostic_control: None,
+                exprs: vec![],
+            }
+        );
+
+        assert_ret!(
+            attribute("@size(16)"),
+            Attribute {
+                ty: AttributeType::Size,
+                diagnostic_control: None,
+                exprs: vec![LiteralExpression::new(Integer::Abstract(16).into(), "16").into()],
+            }
+        );
     }
 
     #[test]

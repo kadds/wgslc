@@ -535,6 +535,7 @@ pub enum AttributeType {
     Fragment,
     Compute,
 }
+
 impl AttributeType {
     pub fn min_chars() -> usize {
         2
@@ -543,21 +544,20 @@ impl AttributeType {
         13
     }
 
-    pub fn is_extendable(&self) -> bool {
-        match self {
-            AttributeType::Align => (),
-            AttributeType::Binding => (),
-            AttributeType::Builtin => (),
-            AttributeType::Diagnostic => (),
-            AttributeType::Group => (),
-            AttributeType::Id => (),
-            AttributeType::Interpolate => (),
-            AttributeType::Location => (),
-            AttributeType::Size => (),
-            AttributeType::WorkgroupSize => (),
-            _ => return false,
-        };
-        true
+    pub fn extendable(&self) -> Option<(usize, usize)> {
+        Some(match self {
+            AttributeType::Align => (1, 1),
+            AttributeType::Binding => (1, 1),
+            AttributeType::Builtin => (1, 1),
+            AttributeType::Diagnostic => (0, 0),
+            AttributeType::Group => (1, 1),
+            AttributeType::Id => (1, 1),
+            AttributeType::Interpolate => (1, 2),
+            AttributeType::Location => (1,1 ),
+            AttributeType::Size => (1,1),
+            AttributeType::WorkgroupSize => (1, 3),
+            _ => return None,
+        })
     }
 }
 
