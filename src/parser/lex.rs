@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::num::NonZeroUsize;
 use std::str::FromStr;
 
 use super::ast::*;
@@ -7,6 +8,7 @@ use super::*;
 use nom::bytes::complete::take_till;
 use nom::character::complete::{char as xchar, one_of};
 use nom::combinator::consumed;
+use nom::combinator::eof;
 use nom::combinator::peek;
 use nom::combinator::recognize;
 use nom::multi::{many0, many1, many_m_n};
@@ -145,6 +147,40 @@ static SPACES: phf::Set<char> = phf::phf_set! {
     '\u{2028}',
     '\u{2029}'
 };
+
+static LINEBREAK: phf::Set<char> = phf::phf_set! {
+    '\u{000A}',
+    '\u{000B}',
+    '\u{000C}',
+    '\u{000D}',
+    '\u{0085}',
+    '\u{2028}',
+    '\u{2029}'
+};
+
+fn linebreak(i: &str) -> IResult<&str, &str> {
+    let mut chars = i.chars();
+    if let Some(c) = chars.next() {
+        if c == '\u{000A}' {
+            // \n\r
+            if let Some(c) = chars.next() {
+                if c == '\u{000D}' {
+                    let (beg, end) = i.split_at(2);
+                    return Ok((end, beg));
+                }
+            }
+            let (beg, end) = i.split_at(1);
+            return Ok((end, beg));
+        } else {
+            if LINEBREAK.contains(&c) {
+                let (beg, end) = i.split_at(1);
+                return Ok((end, beg));
+            }
+        }
+        return Err(nom::Err::Error(make_error(i, ErrorKind::Alpha)));
+    }
+    Ok(("", i))
+}
 
 fn is_space(c: char) -> bool {
     SPACES.contains(&c)
@@ -338,14 +374,14 @@ fn primary_expr(i: &str) -> IResult<&str, ExprId> {
                     )),
                 )),
                 |(ident, template, args)| {
+                    let ident = template.map_or_else(
+                        || IdentExpression::new_ident(ident),
+                        |v| IdentExpression::new(ident, v),
+                    );
                     Some(if let Some(args) = args {
-                        FunctionCallExpression::new(
-                            IdentExpression::new(ident, template),
-                            args.into_iter(),
-                        )
-                        .into()
+                        FunctionCallExpression::new(ident, args.into_iter()).into()
                     } else {
-                        IdentExpression::new(ident, template).into()
+                        ident.into()
                     })
                 },
             ),
@@ -608,21 +644,25 @@ fn template_list(i: &str) -> IResult<&str, ExprId> {
     map_opt(
         delimited(
             lspace0(xchar('<')),
-            separated_list1_ext_sep(
-                terminated(lspace0(xchar(',')), space0),
-                take_till(|c| c == '>' || c == ','),
-            ),
+            separated_list1_ext_sep(terminated(lspace0(xchar(',')), space0), expr),
             lspace0(xchar('>')),
         ),
-        |_vars| {
-            // let mut prev_expr  = None;
-            // // let mut start_expr = ;
-            // // for var in vars {
-            // //     let expr = ListExpression {
-            // //         left:
-            // //     }
-            // // }
-            Some(ParenExpression::new_empty(SynToken::LessThan).into())
+        |exprs| {
+            let mut prev_expr = placement_expr_id();
+            let mut start_expr = placement_expr_id();
+            for expr in exprs {
+                let c = ConcatExpression::new_end(expr).into();
+                if start_expr == placement_expr_id() {
+                    start_expr = c;
+                }
+                if prev_expr != placement_expr_id() {
+                    update_expr_for(prev_expr, |e: &mut ConcatExpression| {
+                        e.right = Some(c);
+                    });
+                }
+                prev_expr = c;
+            }
+            Some(ListExpression::new_comma(start_expr).into())
         },
     )(i)
 }
@@ -762,6 +802,49 @@ fn statement(_i: &str) -> IResult<&str, Statement<'_>> {
     todo!()
 }
 
+fn line_comment(i: &str) -> IResult<&str, &str> {
+    map_opt(
+        tuple((tag("//"), take_till(|c| LINEBREAK.contains(&c)), linebreak)),
+        |(_, v, _)| Some(v),
+    )(i)
+}
+
+fn block_comment_body(i: &str) -> IResult<&str, &str> {
+    let mut chars = i.chars();
+    let mut deep = 0;
+    let mut last_ch = '\0';
+    let mut lens = 0;
+    while let Some(c) = chars.next() {
+        if c == '*' && last_ch == '/' {
+            deep += 1;
+        } else if c == '/' && last_ch == '*' {
+            if deep == 0 {
+                lens -= 1;
+                break;
+            }
+            deep -= 1;
+            last_ch = '\0';
+        } else {
+            last_ch = c;
+        }
+        lens += c.len_utf8();
+    }
+
+    let (beg, end) = i.split_at(lens);
+    Ok((end, beg))
+}
+
+fn block_comment(i: &str) -> IResult<&str, &str> {
+    map_opt(
+        tuple((tag("/*"), block_comment_body, tag("*/"))),
+        |(_, v, _)| Some(v),
+    )(i)
+}
+
+fn comment(i: &str) -> IResult<&str, &str> {
+    alt((line_comment, block_comment))(i)
+}
+
 fn compound_statement(i: &str) -> IResult<&str, CompoundStatement<'_>> {
     map_opt(
         tuple((
@@ -776,7 +859,7 @@ fn variable_decl(i: &str) -> IResult<&str, GlobalVariableDecl> {
     map_opt(
         tuple((
             tag("var"),
-            opt(lspace1(template_list)),
+            opt(lspace0(template_list)),
             lspace1(optionally_typed_ident),
         )),
         |(_, list, ident)| {
@@ -1214,11 +1297,21 @@ pub mod tests {
 
     #[test]
     fn type_alias_decl_test() {
-        let (_, decl) = type_alias_decl("alias Arr = array<i32, 5>").unwrap();
-        assert_eq!(decl.name, "Arr");
-        assert!(decl
-            .ty
-            .match_ident_template("array", ListExpression::new_comma(None).into()));
+        let (_, decl) = type_alias_decl("alias Arr = array<i32>").unwrap();
+        assert_eq!(
+            decl,
+            TypeAliasDecl {
+                name: "Arr",
+                ty: Ty::IdentTemplate((
+                    "array",
+                    ListExpression::new_comma(ConcatExpression::new_end(
+                        IdentExpression::new_ident("i32"),
+                    ))
+                    .into()
+                ))
+                .into(),
+            }
+        );
 
         assert_ret!(
             type_alias_decl("alias single = f32"),
@@ -1230,45 +1323,88 @@ pub mod tests {
     }
 
     #[test]
+    fn comment_test() {
+        assert_ret!(comment("//test "), "test ");
+        assert_ret!(comment("/*test*/"), "test");
+        assert_ret!(comment("/*test/*a*/*/"), "test/*a*/");
+        assert!(comment(r#"/*
+     This is a block comment
+                that spans lines.
+                /* Block comments can nest.
+                 */
+                But all block comments must terminate.
+               */
+        */"#).is_ok())
+    }
+
+    #[test]
     fn struct_decl_test() {
         assert_eq!(
             separated_list1_ext_sep(tag(","), identifier)("a,b,"),
             Ok(("", vec!["a", "b"]))
         );
 
-        //         let struct_str = r#"struct Data {
-        //   a: i32,
-        //   b: vec2<f32>,
-        //   c: array<i32,10>,
-        // }"#;
-        //         assert_ret!(
-        //             struct_decl(struct_str),
-        //             StructDecl {
-        //                 name: "Data",
-        //                 members: vec![
-        //                     StructMember {
-        //                         ident: "a",
-        //                         ty: Ty::Ident("i32"),
-        //                         attrs: vec!(),
-        //                     },
-        //                     StructMember {
-        //                         ident: "b",
-        //                         ty: Ty::TemplateIdent(("vec2", TemplateList { vars: vec!["f32"] })),
-        //                         attrs: vec!(),
-        //                     },
-        //                     StructMember {
-        //                         ident: "c",
-        //                         ty: Ty::TemplateIdent((
-        //                             "array",
-        //                             TemplateList {
-        //                                 vars: vec!["i32", "10"]
-        //                             }
-        //                         )),
-        //                         attrs: vec!(),
-        //                     },
-        //                 ]
-        //             }
-        //         )
+        let struct_str = r#"struct Data {
+          a: i32,
+          b: vec2<f32>,
+          c: array<i32,10>,
+          d: array<vec4<f32>>,
+        }"#;
+        assert_ret!(
+            struct_decl(struct_str),
+            StructDecl {
+                name: "Data",
+                members: vec![
+                    StructMember {
+                        ident: "a",
+                        ty: Ty::Ident("i32"),
+                        attrs: vec!(),
+                    },
+                    StructMember {
+                        ident: "b",
+                        ty: Ty::IdentTemplate((
+                            "vec2",
+                            ListExpression::new_comma(ConcatExpression::new_end(
+                                IdentExpression::new_ident("f32")
+                            ))
+                            .into()
+                        )),
+                        attrs: vec!(),
+                    },
+                    StructMember {
+                        ident: "c",
+                        ty: Ty::IdentTemplate((
+                            "array",
+                            ListExpression::new_comma(ConcatExpression::new(
+                                IdentExpression::new_ident("i32"),
+                                ConcatExpression::new_end(LiteralExpression::new(
+                                    Integer::Abstract(10).into(),
+                                    "10"
+                                ))
+                            ))
+                            .into()
+                        )),
+                        attrs: vec!(),
+                    },
+                    StructMember {
+                        ident: "d",
+                        ty: Ty::IdentTemplate((
+                            "array",
+                            ListExpression::new_comma(ConcatExpression::new_end(
+                                IdentExpression::new(
+                                    "vec4",
+                                    ListExpression::new_comma(ConcatExpression::new_end(
+                                        IdentExpression::new_ident("f32"),
+                                    ))
+                                ),
+                            ))
+                            .into()
+                        )),
+                        attrs: vec!(),
+                    },
+                ]
+            }
+        )
     }
 
     #[test]

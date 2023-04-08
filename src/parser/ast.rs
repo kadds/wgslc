@@ -227,10 +227,10 @@ pub struct IdentExpression<'a> {
 use_expr_fn!(IdentExpression);
 
 impl<'a> IdentExpression<'a> {
-    pub fn new(name: &'a str, template: Option<ExprId>) -> Self {
+    pub fn new<E: Into<ExprId>>(name: &'a str, template: E) -> Self {
         Self {
             name,
-            template_post_ident: template,
+            template_post_ident: Some(template.into()),
         }
     }
     pub fn new_ident(name: &'a str) -> Self {
@@ -289,16 +289,16 @@ pub struct ConcatExpression<'a> {
 use_expr_fn!(ConcatExpression);
 
 impl<'a> ConcatExpression<'a> {
-    pub fn new(cur: ExprId, right: Option<ExprId>) -> Self {
+    pub fn new<E: Into<ExprId>, F: Into<ExprId>>(cur: E, right: F) -> Self {
         Self {
-            cur,
-            right,
+            cur: cur.into(),
+            right: Some(right.into()),
             _pd: PhantomData::default(),
         }
     }
-    pub fn new_end(cur: ExprId) -> Self {
+    pub fn new_end<E: Into<ExprId>>(cur: E) -> Self {
         Self {
-            cur,
+            cur: cur.into(),
             right: None,
             _pd: PhantomData::default(),
         }
@@ -307,7 +307,7 @@ impl<'a> ConcatExpression<'a> {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ListExpression<'a> {
-    pub inner: Option<ExprId>,
+    pub inner: ExprId,
     pub sep: SynToken,
     pub _pd: PhantomData<&'a ()>,
 }
@@ -315,16 +315,16 @@ pub struct ListExpression<'a> {
 use_expr_fn!(ListExpression);
 
 impl<'a> ListExpression<'a> {
-    pub fn new_comma(inner: Option<ExprId>) -> Self {
+    pub fn new_comma<E: Into<ExprId>>(inner: E) -> Self {
         Self {
-            inner,
+            inner: inner.into(),
             sep: SynToken::Comma,
             _pd: PhantomData::default(),
         }
     }
-    pub fn new(inner: Option<ExprId>, sep: SynToken) -> Self {
+    pub fn new<E: Into<ExprId>>(inner: E, sep: SynToken) -> Self {
         Self {
-            inner,
+            inner: inner.into(),
             sep,
             _pd: PhantomData::default(),
         }
@@ -461,18 +461,6 @@ pub enum Ty<'a> {
     None,
 }
 
-impl<'a> Ty<'a> {
-    pub fn match_ident_template(&self, name: &str, expr: ExprId) -> bool {
-        if let Self::IdentTemplate((n, e)) = self {
-            if *n != name {
-                return false;
-            }
-            // return expression_equal(e, &expr);
-        }
-        true
-    }
-}
-
 impl<'a> Default for Ty<'a> {
     fn default() -> Self {
         Self::None
@@ -527,6 +515,7 @@ pub struct ParseResult<'a> {
 #[derive(Default)]
 pub(crate) struct ParseContext<'a> {
     arena: ExpressionIdArena<'a, u32, ()>,
+    opt_level: u32,
 }
 
 impl<'a> ParseContext<'a> {
