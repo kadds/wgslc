@@ -1,5 +1,5 @@
-use std::fmt::Debug;
-use std::num::NonZeroUsize;
+use std::collections::VecDeque;
+use std::str::Chars;
 use std::str::FromStr;
 
 use super::ast::*;
@@ -8,46 +8,36 @@ use super::*;
 use nom::bytes::complete::take_till;
 use nom::character::complete::{char as xchar, one_of};
 use nom::combinator::consumed;
+use nom::combinator::cut;
+use nom::combinator::eof;
 use nom::combinator::peek;
 use nom::combinator::recognize;
+use nom::error::context;
 use nom::multi::{many0, many1, many_m_n};
+use nom::InputTakeAtPosition;
 use nom::{
     branch::alt,
     bytes::complete::{tag, tag_no_case, take_while},
     character::complete::{digit0, digit1, satisfy},
     combinator::{complete, map, map_opt, map_res, opt},
-    error::{make_error, ErrorKind},
     sequence::{delimited, preceded, tuple},
-    IResult,
+    Err,
 };
+type NErr<E> = nom::Err<E>;
+type CErr<'a> = NErr<Error<'a>>;
 
-pub fn dbg<F, I, O, E>(mut f: F, context: &'static str) -> impl FnMut(I) -> IResult<I, O, E>
-where
-    F: FnMut(I) -> IResult<I, O, E>,
-    I: Debug + Clone,
-    E: Debug,
-{
-    move |i| match f(i.clone()) {
-        Err(e) => {
-            log::error!("{}: Error({:?}) at: {:?}", context, e, i);
-            Err(e)
-        }
-        a => a,
-    }
-}
+pub type IResult<'a, I, O> = Result<(I, O), CErr<'a>>;
 
 fn bool(i: &str) -> IResult<&str, Literal> {
-    map_res(alt((tag("true"), tag("false"))), |s| {
-        Ok::<_, nom::Err<&str>>(Literal::Bool(s == "true"))
-    })(i)
+    context(
+        "bool",
+        map_res(alt((tag("true"), tag("false"))), |s| {
+            Ok::<_, Err<Error>>(Literal::Bool(s == "true"))
+        }),
+    )(i)
 }
 
-fn float_err(i: &str) -> nom::Err<nom::error::Error<&str>> {
-    let e: nom::error::Error<&str> = make_error(i, ErrorKind::Float);
-    nom::Err::Error(e)
-}
-
-// [eE][+-]?[0-9]+
+//[eE][+-]?[0-9]+
 fn float_exponent_part(i: &str) -> IResult<&str, Option<i32>> {
     map_opt(
         preceded(
@@ -90,48 +80,54 @@ fn num(i: &str, radix: u32) -> IResult<&str, Literal> {
     if i.is_empty() {
         return Err(nom::Err::Incomplete(nom::Needed::Unknown));
     }
-    map_res(
-        alt((
-            // .023[e+1][f]
-            map_opt(decimal_part, |v| Some(("", v))),
-            // 4.123[e+1][f]
-            // 4.[e-2]
-            // 4.
-            tuple((digit0, decimal_part)),
-            // 4[f]
-            // 1[e-3][f]
-            tuple((
-                digit1,
-                map_opt(num_exponent_suffix, |(exp, suffix)| Some(("", exp, suffix))),
+    context(
+        "num",
+        map_res(
+            alt((
+                // .023[e+1][f]
+                map_opt(decimal_part, |v| Some(("", v))),
+                // 4.123[e+1][f]
+                // 4.[e-2]
+                // 4.
+                tuple((digit0, decimal_part)),
+                // 4[f]
+                // 1[e-3][f]
+                tuple((
+                    digit1,
+                    map_opt(num_exponent_suffix, |(exp, suffix)| Some(("", exp, suffix))),
+                )),
             )),
-        )),
-        |(digit, (decimal, exp, suffix))| {
-            number::parse_num_from(digit, decimal, exp, suffix, radix)
-                .and_then(|v| {
-                    if let Literal::Integer(_) = &v {
-                        // integer
-                        if digit.len() > 1 && digit.starts_with('0') {
-                            return None;
+            |(digit, (decimal, exp, suffix))| {
+                number::parse_num_from(digit, decimal, exp, suffix, radix)
+                    .and_then(|v| {
+                        if let Literal::Integer(_) = &v {
+                            // integer
+                            if digit.len() > 1 && digit.starts_with('0') {
+                                return None;
+                            }
+                        } else {
+                            // float
+                            if digit.is_empty() && decimal.is_empty() {
+                                return None;
+                            }
                         }
-                    } else {
-                        // float
-                        if digit.is_empty() && decimal.is_empty() {
-                            return None;
-                        }
-                    }
-                    Some(v)
-                })
-                .ok_or_else(|| float_err(i))
-        },
+                        Some(v)
+                    })
+                    .ok_or_else(|| Error::new(i, ErrorKind::ParseLiteral))
+            },
+        ),
     )(i)
 }
 
 fn literal(i: &str) -> IResult<&str, Literal> {
-    complete(alt((
-        preceded(tag_no_case("0x"), |i| num(i, 16)),
-        |i| num(i, 10),
-        bool,
-    )))(i)
+    context(
+        "literal",
+        complete(alt((
+            preceded(tag_no_case("0x"), |i| num(i, 16)),
+            |i| num(i, 10),
+            bool,
+        ))),
+    )(i)
 }
 
 static SPACES: phf::Set<char> = phf::phf_set! {
@@ -157,13 +153,22 @@ static LINEBREAK: phf::Set<char> = phf::phf_set! {
     '\u{2029}'
 };
 
-fn linebreak(i: &str) -> IResult<&str, &str> {
+pub fn next_linebreak(i: &str) -> IResult<&str, ()> {
+    map_opt(
+        tuple((take_till(|c| LINEBREAK.contains(&c)), linebreak)),
+        |(_, f)| Some(()),
+    )(i)
+}
+
+// \r\n
+// \r
+// \n
+pub fn linebreak(i: &str) -> IResult<&str, &str> {
     let mut chars = i.chars();
     if let Some(c) = chars.next() {
-        if c == '\u{000A}' {
-            // \n\r
+        if c == '\r' {
             if let Some(c) = chars.next() {
-                if c == '\u{000D}' {
+                if c == '\n' {
                     let (beg, end) = i.split_at(2);
                     return Ok((end, beg));
                 }
@@ -176,111 +181,96 @@ fn linebreak(i: &str) -> IResult<&str, &str> {
                 return Ok((end, beg));
             }
         }
-        return Err(nom::Err::Error(make_error(i, ErrorKind::Alpha)));
+        return Err(NErr::Error(Error::new(i, ErrorKind::ExpectLineBreak)));
     }
     Ok(("", i))
 }
 
-fn is_space(c: char) -> bool {
-    SPACES.contains(&c)
+pub fn space0(i: &str) -> IResult<&str, ()> {
+    let mut input = i;
+    let mut chars = input.chars();
+    let mut chars2 = input.chars();
+    while let Some(c) = chars.next() {
+        if SPACES.contains(&c) {
+            chars2 = chars.clone();
+            continue;
+        }
+        if c == '/' {
+            input = chars2.as_str();
+            let val = map_opt(opt(comment), |_| Some(()))(input)?;
+            if val.0.as_ptr() as usize == input.as_ptr() as usize {
+                break;
+            }
+            chars = val.0.chars();
+            chars2 = chars.clone();
+        } else {
+            break;
+        }
+    }
+    Ok((chars2.as_str(), ()))
 }
 
-fn space(input: &str) -> IResult<&str, &str> {
-    take_while(is_space)(input)
+pub fn space1(i: &str) -> IResult<&str, ()> {
+    map_res(consumed(space0), |(i2, _)| {
+        if i2.as_ptr() as usize != i.as_ptr() as usize {
+            return Ok(());
+        } else {
+            return Err(NErr::Error(Error::new(i, ErrorKind::ExpectSpace)));
+        }
+    })(i)
 }
 
-pub fn space0<T, E: nom::error::ParseError<T>>(input: T) -> IResult<T, T, E>
+pub fn lspace0<'a, O, G>(g: G) -> impl FnMut(&'a str) -> IResult<&'a str, O>
 where
-    T: nom::InputTakeAtPosition,
-    <T as nom::InputTakeAtPosition>::Item: nom::AsChar + Clone,
-{
-    use nom::AsChar;
-    input.split_at_position_complete(|item| {
-        let c = item.as_char();
-        !is_space(c)
-    })
-}
-
-pub fn lspace0<T, O, E: nom::error::ParseError<T>, G>(g: G) -> impl FnMut(T) -> IResult<T, O, E>
-where
-    T: nom::InputTakeAtPosition,
-    <T as nom::InputTakeAtPosition>::Item: nom::AsChar + Clone,
-    G: nom::Parser<T, O, E>,
+    G: nom::Parser<&'a str, O, super::Error<'a>>,
 {
     preceded(space0, g)
 }
 
-pub fn lspace1<T, O, E: nom::error::ParseError<T>, G>(g: G) -> impl FnMut(T) -> IResult<T, O, E>
+pub fn lspace1<'a, O, G>(g: G) -> impl FnMut(&'a str) -> IResult<&'a str, O>
 where
-    T: nom::InputTakeAtPosition,
-    <T as nom::InputTakeAtPosition>::Item: nom::AsChar + Clone,
-    G: nom::Parser<T, O, E>,
+    G: nom::Parser<&'a str, O, super::Error<'a>>,
 {
     preceded(space1, g)
 }
 
-pub fn rspace0<T, O, E: nom::error::ParseError<T>, G>(g: G) -> impl FnMut(T) -> IResult<T, O, E>
+pub fn rspace0<'a, O, G>(g: G) -> impl FnMut(&'a str) -> IResult<&'a str, O>
 where
-    T: nom::InputTakeAtPosition,
-    <T as nom::InputTakeAtPosition>::Item: nom::AsChar + Clone,
-    G: nom::Parser<T, O, E>,
+    G: nom::Parser<&'a str, O, super::Error<'a>>,
 {
     terminated(g, space0)
 }
 
-pub fn rspace1<T, O, E: nom::error::ParseError<T>, G>(g: G) -> impl FnMut(T) -> IResult<T, O, E>
+pub fn rspace1<'a, O, G>(g: G) -> impl FnMut(&'a str) -> IResult<&'a str, O>
 where
-    T: nom::InputTakeAtPosition,
-    <T as nom::InputTakeAtPosition>::Item: nom::AsChar + Clone,
-    G: nom::Parser<T, O, E>,
+    G: nom::Parser<&'a str, O, super::Error<'a>>,
 {
     terminated(g, space1)
 }
 
-pub fn space1<T, E: nom::error::ParseError<T>>(input: T) -> IResult<T, T, E>
+pub fn lrspace0<'a, O, G>(g: G) -> impl FnMut(&'a str) -> IResult<&'a str, O>
 where
-    T: nom::InputTakeAtPosition,
-    <T as nom::InputTakeAtPosition>::Item: nom::AsChar + Clone,
+    G: nom::Parser<&'a str, O, super::Error<'a>>,
 {
-    use nom::AsChar;
-    input.split_at_position1_complete(
-        |item| {
-            let c = item.as_char();
-            !is_space(c)
-        },
-        nom::error::ErrorKind::Space,
-    )
+    delimited(space0, g, space0)
 }
 
-fn is_failure<I>(e: nom::Err<nom::error::Error<I>>) -> bool {
-    match e {
-        nom::Err::Failure(_) => true,
-        _ => false,
-    }
-}
-
-fn is_error<I>(e: nom::Err<nom::error::Error<I>>) -> bool {
-    match e {
-        nom::Err::Error(_) => true,
-        _ => false,
-    }
+pub fn lrspace1<'a, O, G>(g: G) -> impl FnMut(&'a str) -> IResult<&'a str, O>
+where
+    G: nom::Parser<&'a str, O, super::Error<'a>>,
+{
+    delimited(space1, g, space1)
 }
 
 fn keyword(i: &str) -> IResult<&str, Keyword> {
     Keyword::try_from(i)
-        .map_err(|_| {
-            let e: nom::error::Error<&str> = make_error(i, ErrorKind::Alpha);
-            nom::Err::Error(e)
-        })
+        .map_err(|_| NErr::Error(Error::new(i, ErrorKind::ExpectKeyword)))
         .map(|v| ("", v))
 }
 
 fn reserved_keyword(i: &str) -> IResult<&str, ReservedWord> {
     ReservedWord::try_from(i)
-        .map_err(|_| {
-            let e: nom::error::Error<&str> = make_error(i, ErrorKind::Alpha);
-            nom::Err::Error(e)
-        })
+        .map_err(|_| NErr::Error(Error::new(i, ErrorKind::ExpectKeyword)))
         .map(|v| ("", v))
 }
 
@@ -289,24 +279,21 @@ fn is_identifier(i: &str) -> bool {
 }
 
 fn identifier2(i: &str) -> IResult<&str, &str> {
-    dbg(
-        recognize(tuple((
-            satisfy(unicode_ident::is_xid_start),
-            take_while(unicode_ident::is_xid_continue),
-        ))),
-        "identifier2",
-    )(i)
+    recognize(tuple((
+        satisfy(unicode_ident::is_xid_start),
+        take_while(unicode_ident::is_xid_continue),
+    )))(i)
 }
 
 fn identifier(i: &str) -> IResult<&str, &str> {
-    dbg(
-        recognize(tuple((opt(xchar('_')), identifier2))),
+    context(
         "identifier",
+        recognize(tuple((opt(xchar('_')), identifier2))),
     )(i)
 }
 
 fn member_identifier(i: &str) -> IResult<&str, &str> {
-    dbg(identifier, "member_identifier")(i)
+    context("member_identifier", identifier)(i)
 }
 
 fn swizzle_name(i: &str) -> IResult<&str, &str> {
@@ -320,7 +307,8 @@ fn swizzle_name(i: &str) -> IResult<&str, &str> {
 }
 
 fn component_or_swizzle_specifier(i: &str) -> IResult<&str, ExprId> {
-    dbg(
+    context(
+        "swizzle_specifier",
         alt((
             map_opt(
                 tuple((
@@ -355,12 +343,12 @@ fn component_or_swizzle_specifier(i: &str) -> IResult<&str, ExprId> {
                 },
             ),
         )),
-        "component_or_swizzle_specifier",
     )(i)
 }
 
 fn primary_expr(i: &str) -> IResult<&str, ExprId> {
-    dbg(
+    context(
+        "primary_expr",
         alt((
             map_opt(
                 tuple((
@@ -392,12 +380,12 @@ fn primary_expr(i: &str) -> IResult<&str, ExprId> {
                 Some(LiteralExpression::new(r, l).into())
             }),
         )),
-        "primary_expression",
     )(i)
 }
 
 fn unary_expr(i: &str) -> IResult<&str, ExprId> {
-    dbg(
+    context(
+        "unary_expr",
         lspace0(alt((
             map_opt(
                 tuple((one_of("!&*-~"), lspace0(unary_expr))),
@@ -420,12 +408,12 @@ fn unary_expr(i: &str) -> IResult<&str, ExprId> {
                 },
             ),
         ))),
-        "unary_expr",
     )(i)
 }
 
 fn bitwise_expression_post_unary_expr(i: &str) -> IResult<&str, PartialExprId> {
-    dbg(
+    context(
+        "bitwise_expr",
         map_opt(
             alt((
                 many1(tuple((lspace0(tag("&")), lspace0(unary_expr)))),
@@ -445,7 +433,6 @@ fn bitwise_expression_post_unary_expr(i: &str) -> IResult<&str, PartialExprId> {
                 Some(PartialExprId { top: prev, partial })
             },
         ),
-        "bitwise_expression_post_unary_expression",
     )(i)
 }
 
@@ -458,7 +445,8 @@ fn additive_operator(i: &str) -> IResult<&str, &str> {
 }
 
 fn shift_expression_post_unary_expr(i: &str) -> IResult<&str, PartialExprId> {
-    dbg(
+    context(
+        "shift_expr",
         alt((
             map_opt(
                 tuple((
@@ -511,12 +499,12 @@ fn shift_expression_post_unary_expr(i: &str) -> IResult<&str, PartialExprId> {
                 |(_tag, _expr)| Some(PartialExprId::new_empty()),
             ),
         )),
-        "shift_expression_post_unary_expression",
     )(i)
 }
 
 fn relational_expression_post_unary_expr(i: &str) -> IResult<&str, PartialExprId> {
-    dbg(
+    context(
+        "relate_expr",
         map_opt(
             tuple((
                 shift_expression_post_unary_expr,
@@ -551,12 +539,12 @@ fn relational_expression_post_unary_expr(i: &str) -> IResult<&str, PartialExprId
                 }
             },
         ),
-        "relational_expression_post_unary_expression",
     )(i)
 }
 
 fn expr(i: &str) -> IResult<&str, ExprId> {
-    dbg(
+    context(
+        "expr",
         map_opt(
             tuple((
                 unary_expr,
@@ -564,30 +552,32 @@ fn expr(i: &str) -> IResult<&str, ExprId> {
                     map_opt(
                         tuple((
                             relational_expression_post_unary_expr,
-                            opt(lspace0(alt((
-                                preceded(
-                                    peek(tag("&&")),
-                                    many1(tuple((
-                                        lspace0(tag("&&")),
-                                        lspace0(unary_expr),
-                                        lspace0(relational_expression_post_unary_expr),
-                                    ))),
-                                ),
-                                preceded(
-                                    peek(tag("||")),
-                                    many1(tuple((
-                                        lspace0(tag("||")),
-                                        lspace0(unary_expr),
-                                        lspace0(relational_expression_post_unary_expr),
-                                    ))),
-                                ),
-                            )))),
+                            context(
+                                "expr_post_unary_list",
+                                opt(lspace0(alt((
+                                    preceded(
+                                        peek(tag("&&")),
+                                        many1(tuple((
+                                            lspace0(tag("&&")),
+                                            lspace0(unary_expr),
+                                            lspace0(relational_expression_post_unary_expr),
+                                        ))),
+                                    ),
+                                    preceded(
+                                        peek(tag("||")),
+                                        many1(tuple((
+                                            lspace0(tag("||")),
+                                            lspace0(unary_expr),
+                                            lspace0(relational_expression_post_unary_expr),
+                                        ))),
+                                    ),
+                                )))),
+                            ),
                         )),
                         |(r, extends)| {
                             if r.is_empty() && extends.is_none() {
                                 return None;
                             }
-                            log::error!("dsfsdfsdf  {:#?}  \n {:#?}", r, extends);
                             if let Some(extends) = extends {
                                 let mut partial = r.partial;
                                 let mut prev_expr = r.top;
@@ -624,7 +614,6 @@ fn expr(i: &str) -> IResult<&str, ExprId> {
             )),
             |(u, e)| {
                 if !e.is_empty() {
-                    log::info!("extend expr {:#?}", e);
                     let ret = update_expr_for(e.partial, |expr: &mut BinaryExpression| {
                         expr.left = u;
                     });
@@ -635,93 +624,395 @@ fn expr(i: &str) -> IResult<&str, ExprId> {
                 Some(u)
             },
         ),
-        "expr",
+    )(i)
+}
+
+#[derive(Debug, Clone)]
+struct UnclosedCandidate<'a> {
+    position: &'a str,
+    depth: u32,
+    ident: IdentOrLiteral<'a>,
+}
+
+#[derive(Debug)]
+struct TemplateList<'a> {
+    span: &'a str,
+    ident: IdentOrLiteral<'a>,
+    depth: u32,
+    level: u32,
+}
+
+#[derive(Debug, Clone)]
+enum IdentOrLiteral<'a> {
+    Literal((Literal, &'a str)),
+    Ident(&'a str),
+}
+
+fn identifier_or_literal(i: &str) -> IResult<&str, IdentOrLiteral> {
+    context(
+        "identifier_or_literal",
+        alt((
+            map_opt(identifier, |i| Some(IdentOrLiteral::Ident(i))),
+            map_opt(consumed(literal), |(a, b)| {
+                Some(IdentOrLiteral::Literal((b, a)))
+            }),
+        )),
+    )(i)
+}
+
+// #[derive(Debug)]
+// struct TemplateContext<'a> {
+//     stack: Vec<UnclosedCandidate<'a>>,
+//     nesting_depth: u32,
+//     exprs: Vec<(ExprId, u32)>,
+//     cur: Chars<'a>,
+//     ident: Vec<IdentOrLiteral<'a>>,
+// }
+
+// impl<'a> TemplateContext<'a> {
+//     fn new(i: &'a str) -> Self {
+//         let mut selfx= Self {
+//             stack: vec![],
+//             nesting_depth: 0,
+//             exprs: vec![],
+//             cur: i.chars(),
+//             ident: vec![],
+//         };
+
+//         selfx
+//     }
+
+//     fn peek(&self) -> Option<char> {
+//         self.cur.clone().next()
+//     }
+
+//     fn move_next(&mut self) -> Option<ExprId> {
+//         match lspace0(tag(""))(self.cur.as_str()) {
+//             Ok((v, _)) => {
+//                 self.cur = v.chars();
+//             }
+//             Err(_) => {}
+//         };
+
+//         match identifier_or_literal(self.cur.as_str()) {
+//             Ok((i, ident)) => {
+//                 let (i2, _) = lspace0(tag(""))(i).unwrap_or_else(|_| (i, i));
+//                 self.cur = i2;
+//                 self.ident.push(ident);
+//                 return None;
+//             },
+//             _ => (),
+//         }
+//         let c = self.cur.next();
+//         if c.is_none() {
+//             return Some(placement_expr_id());
+//         }
+//         let c = c.unwrap();
+
+//         if c == '<' {
+//             stack.push_back(UnclosedCandidate {
+//                 position: cur.as_str(),
+//                 depth: nesting_depth,
+//                 ident,
+//             });
+//             if let Some(ch) = self.peek() {
+//                 if ch == '<' || ch == '=' {
+//                     stack.pop_back();
+//                     // skip <<, <=
+//                     self.cur.next();
+//                     return None;
+//                 }
+//             }
+//         }
+
+//         None
+//     }
+
+//     fn push(&mut self, ident: IdentOrLiteral<'a>) {
+//         self.stack.push(
+//             UnclosedCandidate { position: self.cur.as_str(), depth: self.nesting_depth, ident }
+//         )
+//     }
+
+//     fn pop(&mut self, ident: IdentExpression<'a>, ch: char) -> Result<(), Error> {
+//         //  if !self.stack.is_empty() && self.stack.last().unwrap().depth == self.nesting_depth {
+//         //                     let t = self.stack.pop().unwrap();
+//         //                     let c = self.cur.as_str().as_ptr() as usize - (t.position.as_ptr() as usize);
+//         //                     let span = &t.position[..c - 1];
+//         //                     if self.exprs.is_empty() {
+//         //                         // return Err();
+//         //                         todo!()
+//         //                     }
+//         //                     // ident or expr
+//         //                     if self.exprs.last().unwrap().0 == placement_expr_id() {
+//         //                         let ty = Ty::Ident(span);
+//         //                         self.exprs.pop();
+//         //                         log::info!("push expr ty{:?}  {} t{:?} span {}", ty, self.stack.len(), t, span);
+//         //                         self.exprs.push((TypeExpression::new(ty).into(), self.stack.len() as u32));
+//         //                         if ch == '>' {
+//         //                             self.stack.push(t.clone());
+//         //                         }
+//         //                     } else {
+//         //                         let mut p = placement_expr_id();
+//         //                         let level = self.stack.len() as u32;
+//         //                         log::info!("before pop get {} s {}", level, self.exprs.len());
+//         //                         let mut n = 0;
+//         //                         while !self.exprs.is_empty() {
+//         //                             let (expr, old_level) = self.exprs.last().unwrap().clone();
+//         //                             if level != old_level {
+//         //                                 break;
+//         //                             }
+//         //                             if p != placement_expr_id() {
+//         //                                 if p.ty() == ExpressionExtendEnum::Concat {
+//         //                                     p = ConcatExpression::new(expr, p).into();
+//         //                                 } else {
+//         //                                     p = ConcatExpression::new(expr, ConcatExpression::new_end(p)).into();
+//         //                                 }
+//         //                             } else {
+//         //                                 p = expr;
+//         //                             }
+//         //                             n+=1;
+//         //                             self.exprs.pop();
+//         //                         }
+
+//         //                         let ty = match &t.ident {
+//         //                             IdentOrLiteral::Literal(l) => {
+//         //                                 return Err(Error::new(l.1, ErrorKind::ExpectIdent));
+//         //                             },
+//         //                             IdentOrLiteral::Ident(i) => if p == placement_expr_id() {
+//         //                                 Ty::Ident(i)
+//         //                             } else { Ty::IdentTemplate((i, p))}
+//         //                         };
+//         //                         log::info!("pop {} exprs as {:?} level {}   {:?} ******** ident ********* {:?} {:?}", n, t, level, p, ty, exprs);
+//         //                         self.exprs.push((TypeExpression::new(ty).into(), self.stack.len() as u32 - 1))
+//         //                     }
+//         //                     if ch == ',' {
+//         //                         self.stack.push_back(UnclosedCandidate { position:
+//         //                             self.cur.as_str(), depth: t.depth, ident: t.ident });
+//         //                         self.exprs.push((placement_expr_id(), self.stack.len() as u32))
+//                             }
+//     }
+// }
+
+// fn template_inner(i: &str) -> IResult<&str, ExprId> {
+//     let mut ctx = TemplateContext::new(i);
+
+//     loop {
+//         if let Some(v) = ctx.move_next() {
+//             return Some(v);
+//         }
+
+//         match identifier_or_literal(cur.as_str()) {
+//             Ok((i, ident)) => {
+//                 let (i2, _) = lspace0(tag(""))(i).unwrap_or_else(|_| (i, i));
+//                 cur = i2.chars();
+//                 if let Some(ch) = cur.next() {
+//                     if ch == '<' {
+//                         stack.push_back(UnclosedCandidate {
+//                             position: cur.as_str(),
+//                             depth: nesting_depth,
+//                             ident,
+//                         });
+//                         chars2 = cur.clone();
+//                         if let Some(ch) = chars2.next() {
+//                             if ch == '<' || ch == '=' {
+//                                 stack.pop_back();
+//                                 cur = chars2;
+//                                 continue;
+//                             }
+//                         }
+//                     } else {
+//                         cur = i2.chars();
+//                     }
+//                 } else {
+//                     break;
+//                 }
+//             }
+//             Result::Err(_) => {
+//                 enum State {
+//                     Pop,
+//                     Enter,
+//                     Out,
+//                     Not,
+//                     Equal,
+//                     Clear,
+//                 }
+//                 if let Some(ch) = cur.next() {
+//                     chars2 = cur.clone();
+//                     if ch == '>' || ch == ',' {
+
+//                         } else {
+//                             if let Some(ch2) = chars2.next() {
+//                                 if ch2 == '=' && ch == '>' {
+//                                     cur = chars2;
+//                                 }
+//                             } else {
+//                                 return Err(NErr::Error(Error::new(i, ErrorKind::ExpectIdent)));
+//                             }
+//                         }
+//                     } else if ch == '(' || ch == '[' {
+//                         nesting_depth += 1;
+//                     } else if ch == ')' || ch == ']' {
+//                         while let Some(v) = stack.back() {
+//                             if v.depth < nesting_depth {
+//                                 break;
+//                             }
+//                             stack.pop_back();
+//                         }
+//                         nesting_depth = (nesting_depth - 1).max(0);
+//                         continue;
+//                     } else if ch == '!' {
+//                         if let Some(ch) = chars2.next() {
+//                             if ch == '=' {
+//                                 cur = chars2;
+//                                 continue;
+//                             }
+//                         }
+//                     } else if ch == '=' {
+//                         if let Some(ch) = chars2.next() {
+//                             if ch != '=' {
+//                                 nesting_depth = 0;
+//                                 stack.clear();
+//                             } else {
+//                                 cur = chars2;
+//                             }
+//                         }
+//                         cur.next();
+//                     } else if ch == ';' || ch == '{' || ch == ':' {
+//                         nesting_depth = 0;
+//                         stack.clear();
+//                     } else {
+//                         // prev_ch.chars().next();
+
+//                         // (prev_ch == '|' && ch == '|') ||(prev_ch == '&'&&ch=='&')  {
+//                         // stack.clear();
+//                         // input = &input[chs..];
+//                         // continue
+//                     }
+//                 } else {
+//                     break;
+//                 }
+//             }
+//         }
+//     }
+//     // log::error!("x {:?} {:?} \"{}\"", substr_n(i, 8, "..."), list, substr_n(cur.as_str(), 8, "..."));
+//     log::info!("y {:?}", exprs.last());
+//     return Ok((cur.as_str(), exprs.last().unwrap().0.clone()));
+//     Err(NErr::Error(Error::new(i, ErrorKind::External)))
+// }
+
+fn template_arg(i: &str) -> IResult<&str, Ty> {
+    context(
+        "template_arg",
+        alt((
+            map_opt(consumed(literal), |(i, o)| Some(Ty::Literal((o, i)))),
+            type_specifier,
+        )),
+    )(i)
+}
+
+fn template_args(i: &str) -> IResult<&str, Vec<Ty>> {
+    context(
+        "template_args",
+        separated_list1_ext_sep(lspace0(xchar(',')), lspace0(template_arg)),
+    )(i)
+}
+
+fn template_inner(i: &str) -> IResult<&str, ExprId> {
+    map_res(
+        delimited(lspace0(xchar('<')), template_args, lspace0(xchar('>'))),
+        |tys| {
+            if tys.len() == 0 {
+                return Err(NErr::Error(Error::new(i, ErrorKind::ExpectTemplateIdent)));
+            }
+            let expr =
+                ConcatExpression::new_concat(tys.into_iter().map(|v| TypeExpression::new(v)));
+            Ok::<_, CErr>(expr)
+        },
     )(i)
 }
 
 fn template_list(i: &str) -> IResult<&str, ExprId> {
-    map_opt(
-        delimited(
-            lspace0(xchar('<')),
-            separated_list1_ext_sep(terminated(lspace0(xchar(',')), space0), expr),
-            lspace0(xchar('>')),
-        ),
-        |exprs| {
-            let mut prev_expr = placement_expr_id();
-            let mut start_expr = placement_expr_id();
-            for expr in exprs {
-                let c = ConcatExpression::new_end(expr).into();
-                if start_expr == placement_expr_id() {
-                    start_expr = c;
-                }
-                if prev_expr != placement_expr_id() {
-                    update_expr_for(prev_expr, |e: &mut ConcatExpression| {
-                        e.right = Some(c);
-                    });
-                }
-                prev_expr = c;
-            }
-            Some(ListExpression::new_comma(start_expr).into())
-        },
+    context(
+        "template_list",
+        map_opt(preceded(peek(tag("<")), template_inner), |expr| Some(expr)),
     )(i)
 }
 
 fn type_specifier(i: &str) -> IResult<&str, Ty<'_>> {
-    map_opt(tuple((identifier, opt(template_list))), |(ident, list)| {
-        if let Some(template) = list {
-            Some(Ty::IdentTemplate((ident, template)))
-        } else {
-            Some(Ty::Ident(ident))
-        }
-    })(i)
+    context(
+        "type_specifier",
+        map_opt(
+            tuple((identifier, opt(lspace0(template_list)))),
+            |(ident, list)| {
+                if let Some(template) = list {
+                    Some(Ty::IdentTemplate((ident, template)))
+                } else {
+                    Some(Ty::Ident(ident))
+                }
+            },
+        ),
+    )(i)
 }
 
 fn struct_member(i: &str) -> IResult<&str, StructMember> {
-    map_opt(
-        tuple((
-            many0(rspace1(attribute)),
-            lspace0(member_identifier),
-            lspace0(xchar(':')),
-            lspace0(type_specifier),
-        )),
-        |(attrs, member_name, _, ty)| {
-            Some(StructMember {
-                ident: member_name,
-                ty,
-                attrs,
-            })
-        },
+    context(
+        "struct_member",
+        map_opt(
+            tuple((
+                attributes,
+                lspace0(member_identifier),
+                lspace0(xchar(':')),
+                rspace0(lspace0(type_specifier)),
+            )),
+            |(attrs, member_name, _, ty)| {
+                Some(StructMember {
+                    ident: member_name,
+                    ty,
+                    attrs,
+                })
+            },
+        ),
     )(i)
 }
 
 fn struct_body_decl(i: &str) -> IResult<&str, StructDecl> {
-    map_opt(
-        delimited(
-            lspace0(xchar('{')),
-            separated_list1_ext_sep(lspace0(xchar(',')), struct_member),
-            lspace0(xchar('}')),
+    context(
+        "struct_body",
+        map_opt(
+            delimited(
+                lspace0(xchar('{')),
+                separated_list1_ext_sep(lspace0(xchar(',')), lspace0(struct_member)),
+                lspace0(xchar('}')),
+            ),
+            |members| Some(StructDecl { name: "", members }),
         ),
-        |members| Some(StructDecl { name: "", members }),
     )(i)
 }
 
 fn optionally_typed_ident(i: &str) -> IResult<&str, OptionallyTypedIdent<'_>> {
-    map_opt(
-        tuple((
-            identifier,
-            opt(preceded(lspace0(xchar(':')), lspace0(type_specifier))),
-        )),
-        |(ident, ty)| Some(OptionallyTypedIdent { name: ident, ty }),
+    context(
+        "optional_typed_ident",
+        map_opt(
+            tuple((
+                identifier,
+                opt(preceded(lspace0(xchar(':')), lspace0(type_specifier))),
+            )),
+            |(ident, ty)| Some(OptionallyTypedIdent { name: ident, ty }),
+        ),
     )(i)
 }
 
 fn param(i: &str) -> IResult<&str, Param<'_>> {
-    map_opt(
-        tuple((
-            identifier,
-            preceded(lspace0(xchar(':')), lspace0(type_specifier)),
-        )),
-        |(ident, ty)| Some(Param { name: ident, ty }),
+    context(
+        "param",
+        map_opt(
+            tuple((
+                identifier,
+                preceded(lspace0(xchar(':')), lspace0(type_specifier)),
+            )),
+            |(ident, ty)| Some(Param { name: ident, ty }),
+        ),
     )(i)
 }
 
@@ -730,56 +1021,68 @@ fn function_inputs(i: &str) -> IResult<&str, Vec<Param<'_>>> {
 }
 
 fn function_header(i: &str) -> IResult<&str, FunctionDecl> {
-    map_opt(
-        tuple((
-            lspace0(tag("fn")),
-            lspace1(identifier),
-            delimited(
-                lspace0(xchar('(')),
-                lspace0(function_inputs),
-                lspace0(xchar(')')),
-            ),
-            opt(preceded(
-                lspace0(tag("->")),
-                tuple((many0(rspace1(attribute)), lspace0(type_specifier))),
+    context(
+        "function_header",
+        map_opt(
+            tuple((
+                tag("fn"),
+                lspace1(identifier),
+                context(
+                    "function_params",
+                    cut(tuple((
+                        delimited(
+                            lspace0(xchar('(')),
+                            lspace0(function_inputs),
+                            lspace0(xchar(')')),
+                        ),
+                        opt(context(
+                            "function_output",
+                            preceded(
+                                lspace0(tag("->")),
+                                tuple((attributes, lspace0(type_specifier))),
+                            ),
+                        )),
+                    ))),
+                ),
             )),
-        )),
-        |(_, name, inputs, output)| {
-            Some(FunctionDecl {
-                name,
-                inputs,
-                output,
-                ast: None,
-                attrs: vec![],
-            })
-        },
+            |(_, name, (inputs, output))| {
+                Some(FunctionDecl {
+                    name,
+                    inputs,
+                    output,
+                    block: placement_statm_id(),
+                    attrs: vec![],
+                })
+            },
+        ),
     )(i)
 }
 
 fn diagnostic_control(i: &str) -> IResult<&str, DiagnosticControl> {
-    map_opt(
-        delimited(
-            lspace0(xchar('(')),
-            tuple((
-                lspace0(alt((tag("error"), tag("info"), tag("off"), tag("warning")))),
-                identifier,
-                opt(lspace0(xchar(','))),
-            )),
-            lspace0(xchar(')')),
+    context(
+        "diagnostic_control",
+        map_opt(
+            delimited(
+                lspace0(xchar('(')),
+                tuple((
+                    lspace0(alt((tag("error"), tag("info"), tag("off"), tag("warning")))),
+                    identifier,
+                    opt(lspace0(xchar(','))),
+                )),
+                lspace0(xchar(')')),
+            ),
+            |(n, i, _)| Some(DiagnosticControl { name: n, ident: i }),
         ),
-        |(n, i, _)| Some(DiagnosticControl { name: n, ident: i }),
     )(i)
 }
 
 fn attribute(i: &str) -> IResult<&str, Attribute<'_>> {
     let (rest, result) = preceded(xchar('@'), lspace0(identifier))(i)?;
-    let attr = AttributeType::from_str(result).map_err(|_| {
-        let e: nom::error::Error<&str> = make_error(i, ErrorKind::Alpha);
-        nom::Err::Error(e)
-    })?;
+    let attr = AttributeType::from_str(result)
+        .map_err(|_| NErr::Error(Error::new(i, ErrorKind::ExpectAttribute)))?;
     if let Some((min, max)) = attr.extendable() {
         if attr == AttributeType::Diagnostic {
-            let (rest, result) = diagnostic_control(rest)?;
+            let (rest, result) = cut(diagnostic_control)(rest)?;
             return Ok((
                 rest,
                 Attribute {
@@ -800,7 +1103,7 @@ fn attribute(i: &str) -> IResult<&str, Attribute<'_>> {
                         preceded(lspace0(xchar(',')), lspace0(expr)),
                     ),
                 )),
-                tuple((opt(lspace0(xchar(','))), lspace0(xchar(')')))),
+                lspace0(tuple((opt(xchar(',')), lspace0(xchar(')'))))),
             ),
             |(expr0, mut exprs)| {
                 exprs.insert(0, expr0);
@@ -824,10 +1127,10 @@ fn attribute(i: &str) -> IResult<&str, Attribute<'_>> {
 }
 
 fn attributes(i: &str) -> IResult<&str, Vec<Attribute<'_>>> {
-    many0(rspace1(attribute))(i)
+    context("attributes", many0(rspace1(attribute)))(i)
 }
 
-fn statement(_i: &str) -> IResult<&str, Statement<'_>> {
+fn statement(_i: &str) -> IResult<&str, StatmId> {
     todo!()
 }
 
@@ -871,7 +1174,7 @@ fn block_comment(i: &str) -> IResult<&str, &str> {
 }
 
 fn comment(i: &str) -> IResult<&str, &str> {
-    alt((line_comment, block_comment))(i)
+    context("comment", alt((line_comment, block_comment)))(i)
 }
 
 fn compound_statement(i: &str) -> IResult<&str, CompoundStatement> {
@@ -889,71 +1192,83 @@ fn assignment_statement(i: &str) -> IResult<&str, AssignmentStatement> {
 }
 
 fn variable_decl(i: &str) -> IResult<&str, GlobalVariableDecl> {
-    map_opt(
-        tuple((
-            tag("var"),
-            opt(lspace0(template_list)),
-            lspace1(optionally_typed_ident),
-        )),
-        |(_, list, ident)| {
-            Some(GlobalVariableDecl {
-                template_list: list,
-                ident,
-                equals: None,
-                ..Default::default()
-            })
-        },
+    context(
+        "variable_decl",
+        map_opt(
+            tuple((
+                tag("var"),
+                opt(lspace0(template_list)),
+                cut(lspace0(optionally_typed_ident)),
+            )),
+            |(_, list, ident)| {
+                Some(GlobalVariableDecl {
+                    template_list: list,
+                    ident,
+                    equals: None,
+                    ..Default::default()
+                })
+            },
+        ),
     )(i)
 }
 
 fn global_override_value_decl(i: &str) -> IResult<&str, GlobalOverrideValueDecl> {
-    map_opt(
-        tuple((
-            lspace0(attributes),
-            lspace0(tag("override")),
-            lspace1(optionally_typed_ident),
-            opt(preceded(lspace0(xchar('=')), lspace0(expr))),
-        )),
-        |(attrs, _, ident, expr)| {
-            Some(GlobalOverrideValueDecl {
-                ident,
-                equals: expr,
-                attrs,
-            })
-        },
+    context(
+        "override_value_decl",
+        map_opt(
+            tuple((
+                lspace0(attributes),
+                lspace0(tag("override")),
+                lspace1(optionally_typed_ident),
+                opt(preceded(lspace0(xchar('=')), lspace0(expr))),
+            )),
+            |(attrs, _, ident, expr)| {
+                Some(GlobalOverrideValueDecl {
+                    ident,
+                    equals: expr,
+                    attrs,
+                })
+            },
+        ),
     )(i)
 }
 
 fn global_const_value_decl(i: &str) -> IResult<&str, GlobalConstValueDecl> {
-    map_opt(
-        preceded(
-            tag("const"),
-            tuple((
-                lspace1(optionally_typed_ident),
-                preceded(lspace0(xchar('=')), lspace0(expr)),
-            )),
+    context(
+        "const_value_decl",
+        map_opt(
+            preceded(
+                tag("const"),
+                tuple((
+                    lspace1(optionally_typed_ident),
+                    preceded(lspace0(xchar('=')), lspace0(expr)),
+                )),
+            ),
+            |(ident, expr)| {
+                Some(GlobalConstValueDecl {
+                    ident,
+                    equals: expr,
+                })
+            },
         ),
-        |(ident, expr)| {
-            Some(GlobalConstValueDecl {
-                ident,
-                equals: expr,
-            })
-        },
     )(i)
 }
 
 fn global_variable_decl(i: &str) -> IResult<&str, GlobalVariableDecl> {
-    map_opt(
-        tuple((
-            lspace0(attributes),
-            lspace0(variable_decl),
-            opt(preceded(lspace0(xchar('=')), lspace0(expr))),
-        )),
-        |(attrs, mut va, exp)| {
-            va.equals = exp;
-            va.attrs = attrs;
-            Some(va)
-        },
+    context(
+        "global_variable_decl",
+        map_opt(
+            tuple((
+                lspace0(attributes),
+                lspace0(variable_decl),
+                opt(preceded(lspace0(xchar('=')), lspace0(expr))),
+            )),
+            |(attrs, mut va, exp)| {
+                va.equals = exp;
+                va.attrs = attrs;
+                Some(va)
+            },
+        ),
     )(i)
 }
 
@@ -969,59 +1284,76 @@ fn global_value_decl(i: &str) -> IResult<&str, GlobalValueDecl> {
 }
 
 fn type_alias_decl(i: &str) -> IResult<&str, TypeAliasDecl> {
-    map_opt(
-        tuple((
-            lspace0(tag("alias")),
-            lspace1(identifier),
-            lspace0(tag("=")),
-            lspace0(type_specifier),
-        )),
-        |(_, name, _, ty)| Some(TypeAliasDecl { name, ty }),
+    context(
+        "type_alias",
+        map_opt(
+            tuple((
+                lspace0(tag("alias")),
+                lspace1(identifier),
+                lspace0(tag("=")),
+                lspace0(type_specifier),
+            )),
+            |(_, name, _, ty)| Some(TypeAliasDecl { name, ty }),
+        ),
     )(i)
 }
 
 fn struct_decl(i: &str) -> IResult<&str, StructDecl> {
-    map_opt(
-        tuple((
-            preceded(tag("struct"), lspace1(identifier)),
-            struct_body_decl,
-        )),
-        |(name, mut struct_members)| {
-            struct_members.name = name;
-            Some(struct_members)
-        },
+    context(
+        "struct_decl",
+        map_opt(
+            tuple((
+                preceded(tag("struct"), lspace1(identifier)),
+                cut(struct_body_decl),
+            )),
+            |(name, mut struct_members)| {
+                struct_members.name = name;
+                Some(struct_members)
+            },
+        ),
     )(i)
 }
 
 fn function_decl(i: &str) -> IResult<&str, FunctionDecl> {
-    map_opt(
-        tuple((attributes, function_header, compound_statement)),
-        |(attrs, mut decl, _detail)| {
-            decl.attrs = attrs;
-            Some(decl)
-        },
+    context(
+        "function_decl",
+        map_opt(
+            tuple((
+                attributes,
+                lspace0(function_header),
+                lspace0(compound_statement),
+            )),
+            |(attrs, mut decl, _detail)| {
+                decl.attrs = attrs;
+                Some(decl)
+            },
+        ),
     )(i)
 }
 
 fn const_assert_statement(i: &str) -> IResult<&str, ConstAssertStatement> {
-    map_opt(preceded(tag("const_assert"), lspace1(expr)), |expr| {
-        Some(ConstAssertStatement {
-            expr,
-            _pd: PhantomData::default(),
-        })
-    })(i)
-}
-
-#[allow(unused)]
-fn enable_directive(i: &str) -> IResult<&str, &str> {
-    delimited(
-        tag("enable"),
-        delimited(space1, identifier, space0),
-        tag(";"),
+    context(
+        "const_assert",
+        map_opt(preceded(tag("const_assert"), lspace1(expr)), |expr| {
+            Some(ConstAssertStatement {
+                expr,
+                _pd: PhantomData::default(),
+            })
+        }),
     )(i)
 }
 
-#[allow(unused)]
+fn enable_directive(i: &str) -> IResult<&str, &str> {
+    context(
+        "enable_directive",
+        delimited(
+            tag("enable"),
+            delimited(space1, identifier, space0),
+            tag(";"),
+        ),
+    )(i)
+}
+
 fn global_decl(i: &str) -> IResult<&str, GlobalDecl<'_>> {
     preceded(
         space0,
@@ -1040,10 +1372,20 @@ fn global_decl(i: &str) -> IResult<&str, GlobalDecl<'_>> {
             map_opt(function_decl, |v| Some(GlobalDecl::FunctionDecl(v))),
             map_opt(
                 terminated(const_assert_statement, lspace0(xchar(';'))),
-                |v| Some(GlobalDecl::ConstAssertStatement(v)),
+                |v| Some(GlobalDecl::GlobalConstAssertStatement(v)),
             ),
         )),
     )(i)
+}
+
+#[allow(unused)]
+pub fn global_directives(i: &str) -> IResult<&str, Vec<&str>> {
+    many0(lspace0(enable_directive))(i)
+}
+
+#[allow(unused)]
+pub fn global_decls(i: &str) -> IResult<&str, Vec<GlobalDecl>> {
+    many0(lspace0(global_decl))(i)
 }
 
 #[cfg(test)]
@@ -1051,6 +1393,13 @@ pub mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
     use test_log::test;
+    fn is_error<E>(e: nom::Err<E>) -> bool {
+        match e {
+            Err::Error(_) => true,
+            Err::Failure(_) => true,
+            _ => false,
+        }
+    }
     macro_rules! assert_ret {
         ($left: expr, $right: expr) => {
             assert_eq!($left.unwrap().1, $right)
@@ -1067,6 +1416,81 @@ pub mod tests {
         ($left: expr) => {
             assert!(is_error($left.unwrap_err()))
         };
+    }
+    #[test]
+    fn template_test() {
+        assert_ret!(
+            template_list("<array<vec4<f32, f64>>, int<i32, mat<u32, 4>>>"),
+            ConcatExpression::new_concat(
+                [
+                    TypeExpression::new(Ty::IdentTemplate((
+                        "array",
+                        ConcatExpression::new_concat(
+                            [TypeExpression::new(Ty::IdentTemplate((
+                                "vec4",
+                                ConcatExpression::new_concat(
+                                    [
+                                        TypeExpression::new(Ty::Ident("f32")),
+                                        TypeExpression::new(Ty::Ident("f64"))
+                                    ]
+                                    .into_iter()
+                                )
+                            )))]
+                            .into_iter()
+                        )
+                    ))),
+                    TypeExpression::new(Ty::IdentTemplate((
+                        "int",
+                        ConcatExpression::new_concat(
+                            [
+                                TypeExpression::new(Ty::Ident("i32")),
+                                TypeExpression::new(Ty::IdentTemplate((
+                                    "mat",
+                                    ConcatExpression::new_concat(
+                                        [
+                                            TypeExpression::new(Ty::Ident("u32")),
+                                            TypeExpression::new(Ty::Literal((
+                                                Integer::Abstract(4).into(),
+                                                "4"
+                                            )))
+                                        ]
+                                        .into_iter()
+                                    )
+                                )))
+                            ]
+                            .into_iter()
+                        )
+                    )))
+                ]
+                .into_iter()
+            )
+            .into()
+        );
+
+        assert_ret!(
+            template_list("<i32, 5>"),
+            ConcatExpression::new_concat(
+                [
+                    TypeExpression::new(Ty::Ident("i32")),
+                    TypeExpression::new(Ty::Literal((Integer::Abstract(5).into(), "5")))
+                ]
+                .into_iter()
+            )
+            .into()
+        );
+        assert_ret!(
+            template_list("<i32>"),
+            TypeExpression::new(Ty::Ident("i32")).into()
+        );
+        assert_ret!(
+            template_list("<5>"),
+            TypeExpression::new(Ty::Literal((Integer::Abstract(5).into(), "5"))).into()
+        );
+
+        // assert_ret!(
+        //     template_list("<(4+7)>"),
+        //     TypeExpression::new(Ty::Ident("(4+7)")).into()
+        // );
     }
 
     #[test]
@@ -1276,7 +1700,7 @@ pub mod tests {
                     }
                 ],
                 output: Some((vec!(), Ty::Ident("i32"))),
-                ast: None,
+                block: placement_statm_id(),
                 attrs: vec!(),
             }
         );
@@ -1291,6 +1715,25 @@ pub mod tests {
                 ident: OptionallyTypedIdent {
                     name: "i",
                     ty: Some(Ty::Ident("i32"))
+                },
+                equals: None,
+                attrs: vec!(),
+            }
+        );
+
+        assert_ret!(
+            global_variable_decl("var i: array<i32>"),
+            GlobalVariableDecl {
+                template_list: None,
+                ident: OptionallyTypedIdent {
+                    name: "i",
+                    ty: Some(Ty::IdentTemplate((
+                        "array",
+                        ListExpression::new_comma(ConcatExpression::new_end(
+                            IdentExpression::new_ident("i32")
+                        ))
+                        .into()
+                    )))
                 },
                 equals: None,
                 attrs: vec!(),
@@ -1392,11 +1835,6 @@ pub mod tests {
 
     #[test]
     fn struct_decl_test() {
-        assert_eq!(
-            separated_list1_ext_sep(tag(","), identifier)("a,b,"),
-            Ok(("", vec!["a", "b"]))
-        );
-
         let struct_str = r#"struct Data {
           a: i32,
           b: vec2<f32>,
