@@ -553,8 +553,8 @@ impl AttributeType {
             AttributeType::Group => (1, 1),
             AttributeType::Id => (1, 1),
             AttributeType::Interpolate => (1, 2),
-            AttributeType::Location => (1,1 ),
-            AttributeType::Size => (1,1),
+            AttributeType::Location => (1, 1),
+            AttributeType::Size => (1, 1),
             AttributeType::WorkgroupSize => (1, 3),
             _ => return None,
         })

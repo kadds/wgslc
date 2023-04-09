@@ -155,7 +155,9 @@ impl<'a> Debug for ErrContext<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let input = substr_n(self.input, 24, "...");
         f.debug_struct("")
-        .field("msg", &self.msg).field("input", &input).finish()
+            .field("msg", &self.msg)
+            .field("input", &input)
+            .finish()
     }
 }
 
@@ -241,7 +243,10 @@ where
     I: Debug + Into<&'a str>,
 {
     fn add_context(input: I, ctx: &'static str, mut other: Self) -> Self {
-        other.context.push(ErrContext{msg: ctx.to_owned(), input: input.into()});
+        other.context.push(ErrContext {
+            msg: ctx.to_owned(),
+            input: input.into(),
+        });
         other
     }
 }

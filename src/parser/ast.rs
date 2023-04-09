@@ -290,7 +290,7 @@ impl<'a> Debug for ConcatExpression<'a> {
                     let n = get_expr(cur);
                     if let Expression::Concat(e) = n {
                         list.entry(&e.cur);
-                        if let Some(v) =  e.right {
+                        if let Some(v) = e.right {
                             cur = v;
                             continue;
                         }
@@ -300,10 +300,8 @@ impl<'a> Debug for ConcatExpression<'a> {
                     break;
                 }
                 list.finish()
-            },
-            _ => {
-                self.cur.fmt(f)
             }
+            _ => self.cur.fmt(f),
         }
     }
 }
@@ -325,7 +323,7 @@ impl<'a> ConcatExpression<'a> {
             _pd: PhantomData::default(),
         }
     }
-    pub fn new_concat<E: Into<ExprId>>(mut list: impl Iterator<Item=E>) -> ExprId {
+    pub fn new_concat<E: Into<ExprId>>(mut list: impl Iterator<Item = E>) -> ExprId {
         let first = list.next().unwrap();
         if let Some(second_item) = list.next() {
             // second
@@ -341,7 +339,7 @@ impl<'a> ConcatExpression<'a> {
             }
             return p;
         } else {
-            return first.into()
+            return first.into();
         }
     }
 }
