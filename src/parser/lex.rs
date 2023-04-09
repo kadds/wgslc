@@ -521,7 +521,6 @@ fn relational_expression_post_unary_expr(i: &str) -> IResult<&str, PartialExprId
                 ))),
             )),
             |(e, opt)| {
-                log::info!("opt {:?}, {:?}", e, opt);
                 if let Some((op, expr, _e2)) = opt {
                     let top =
                         BinaryExpression::new(e.top, SynToken::from_str(op).ok()?, expr).into();
@@ -625,280 +624,6 @@ fn expr(i: &str) -> IResult<&str, ExprId> {
         ),
     )(i)
 }
-
-#[derive(Debug, Clone)]
-struct UnclosedCandidate<'a> {
-    position: &'a str,
-    depth: u32,
-    ident: IdentOrLiteral<'a>,
-}
-
-#[derive(Debug)]
-struct TemplateList<'a> {
-    span: &'a str,
-    ident: IdentOrLiteral<'a>,
-    depth: u32,
-    level: u32,
-}
-
-#[derive(Debug, Clone)]
-enum IdentOrLiteral<'a> {
-    Literal((Literal, &'a str)),
-    Ident(&'a str),
-}
-
-fn identifier_or_literal(i: &str) -> IResult<&str, IdentOrLiteral> {
-    context(
-        "identifier_or_literal",
-        alt((
-            map_opt(identifier, |i| Some(IdentOrLiteral::Ident(i))),
-            map_opt(consumed(literal), |(a, b)| {
-                Some(IdentOrLiteral::Literal((b, a)))
-            }),
-        )),
-    )(i)
-}
-
-// #[derive(Debug)]
-// struct TemplateContext<'a> {
-//     stack: Vec<UnclosedCandidate<'a>>,
-//     nesting_depth: u32,
-//     exprs: Vec<(ExprId, u32)>,
-//     cur: Chars<'a>,
-//     ident: Vec<IdentOrLiteral<'a>>,
-// }
-
-// impl<'a> TemplateContext<'a> {
-//     fn new(i: &'a str) -> Self {
-//         let mut selfx= Self {
-//             stack: vec![],
-//             nesting_depth: 0,
-//             exprs: vec![],
-//             cur: i.chars(),
-//             ident: vec![],
-//         };
-
-//         selfx
-//     }
-
-//     fn peek(&self) -> Option<char> {
-//         self.cur.clone().next()
-//     }
-
-//     fn move_next(&mut self) -> Option<ExprId> {
-//         match lspace0(tag(""))(self.cur.as_str()) {
-//             Ok((v, _)) => {
-//                 self.cur = v.chars();
-//             }
-//             Err(_) => {}
-//         };
-
-//         match identifier_or_literal(self.cur.as_str()) {
-//             Ok((i, ident)) => {
-//                 let (i2, _) = lspace0(tag(""))(i).unwrap_or_else(|_| (i, i));
-//                 self.cur = i2;
-//                 self.ident.push(ident);
-//                 return None;
-//             },
-//             _ => (),
-//         }
-//         let c = self.cur.next();
-//         if c.is_none() {
-//             return Some(placement_expr_id());
-//         }
-//         let c = c.unwrap();
-
-//         if c == '<' {
-//             stack.push_back(UnclosedCandidate {
-//                 position: cur.as_str(),
-//                 depth: nesting_depth,
-//                 ident,
-//             });
-//             if let Some(ch) = self.peek() {
-//                 if ch == '<' || ch == '=' {
-//                     stack.pop_back();
-//                     // skip <<, <=
-//                     self.cur.next();
-//                     return None;
-//                 }
-//             }
-//         }
-
-//         None
-//     }
-
-//     fn push(&mut self, ident: IdentOrLiteral<'a>) {
-//         self.stack.push(
-//             UnclosedCandidate { position: self.cur.as_str(), depth: self.nesting_depth, ident }
-//         )
-//     }
-
-//     fn pop(&mut self, ident: IdentExpression<'a>, ch: char) -> Result<(), Error> {
-//         //  if !self.stack.is_empty() && self.stack.last().unwrap().depth == self.nesting_depth {
-//         //                     let t = self.stack.pop().unwrap();
-//         //                     let c = self.cur.as_str().as_ptr() as usize - (t.position.as_ptr() as usize);
-//         //                     let span = &t.position[..c - 1];
-//         //                     if self.exprs.is_empty() {
-//         //                         // return Err();
-//         //                         todo!()
-//         //                     }
-//         //                     // ident or expr
-//         //                     if self.exprs.last().unwrap().0 == placement_expr_id() {
-//         //                         let ty = Ty::Ident(span);
-//         //                         self.exprs.pop();
-//         //                         log::info!("push expr ty{:?}  {} t{:?} span {}", ty, self.stack.len(), t, span);
-//         //                         self.exprs.push((TypeExpression::new(ty).into(), self.stack.len() as u32));
-//         //                         if ch == '>' {
-//         //                             self.stack.push(t.clone());
-//         //                         }
-//         //                     } else {
-//         //                         let mut p = placement_expr_id();
-//         //                         let level = self.stack.len() as u32;
-//         //                         log::info!("before pop get {} s {}", level, self.exprs.len());
-//         //                         let mut n = 0;
-//         //                         while !self.exprs.is_empty() {
-//         //                             let (expr, old_level) = self.exprs.last().unwrap().clone();
-//         //                             if level != old_level {
-//         //                                 break;
-//         //                             }
-//         //                             if p != placement_expr_id() {
-//         //                                 if p.ty() == ExpressionExtendEnum::Concat {
-//         //                                     p = ConcatExpression::new(expr, p).into();
-//         //                                 } else {
-//         //                                     p = ConcatExpression::new(expr, ConcatExpression::new_end(p)).into();
-//         //                                 }
-//         //                             } else {
-//         //                                 p = expr;
-//         //                             }
-//         //                             n+=1;
-//         //                             self.exprs.pop();
-//         //                         }
-
-//         //                         let ty = match &t.ident {
-//         //                             IdentOrLiteral::Literal(l) => {
-//         //                                 return Err(Error::new(l.1, ErrorKind::ExpectIdent));
-//         //                             },
-//         //                             IdentOrLiteral::Ident(i) => if p == placement_expr_id() {
-//         //                                 Ty::Ident(i)
-//         //                             } else { Ty::IdentTemplate((i, p))}
-//         //                         };
-//         //                         log::info!("pop {} exprs as {:?} level {}   {:?} ******** ident ********* {:?} {:?}", n, t, level, p, ty, exprs);
-//         //                         self.exprs.push((TypeExpression::new(ty).into(), self.stack.len() as u32 - 1))
-//         //                     }
-//         //                     if ch == ',' {
-//         //                         self.stack.push_back(UnclosedCandidate { position:
-//         //                             self.cur.as_str(), depth: t.depth, ident: t.ident });
-//         //                         self.exprs.push((placement_expr_id(), self.stack.len() as u32))
-//                             }
-//     }
-// }
-
-// fn template_inner(i: &str) -> IResult<&str, ExprId> {
-//     let mut ctx = TemplateContext::new(i);
-
-//     loop {
-//         if let Some(v) = ctx.move_next() {
-//             return Some(v);
-//         }
-
-//         match identifier_or_literal(cur.as_str()) {
-//             Ok((i, ident)) => {
-//                 let (i2, _) = lspace0(tag(""))(i).unwrap_or_else(|_| (i, i));
-//                 cur = i2.chars();
-//                 if let Some(ch) = cur.next() {
-//                     if ch == '<' {
-//                         stack.push_back(UnclosedCandidate {
-//                             position: cur.as_str(),
-//                             depth: nesting_depth,
-//                             ident,
-//                         });
-//                         chars2 = cur.clone();
-//                         if let Some(ch) = chars2.next() {
-//                             if ch == '<' || ch == '=' {
-//                                 stack.pop_back();
-//                                 cur = chars2;
-//                                 continue;
-//                             }
-//                         }
-//                     } else {
-//                         cur = i2.chars();
-//                     }
-//                 } else {
-//                     break;
-//                 }
-//             }
-//             Result::Err(_) => {
-//                 enum State {
-//                     Pop,
-//                     Enter,
-//                     Out,
-//                     Not,
-//                     Equal,
-//                     Clear,
-//                 }
-//                 if let Some(ch) = cur.next() {
-//                     chars2 = cur.clone();
-//                     if ch == '>' || ch == ',' {
-
-//                         } else {
-//                             if let Some(ch2) = chars2.next() {
-//                                 if ch2 == '=' && ch == '>' {
-//                                     cur = chars2;
-//                                 }
-//                             } else {
-//                                 return Err(NErr::Error(Error::new(i, ErrorKind::ExpectIdent)));
-//                             }
-//                         }
-//                     } else if ch == '(' || ch == '[' {
-//                         nesting_depth += 1;
-//                     } else if ch == ')' || ch == ']' {
-//                         while let Some(v) = stack.back() {
-//                             if v.depth < nesting_depth {
-//                                 break;
-//                             }
-//                             stack.pop_back();
-//                         }
-//                         nesting_depth = (nesting_depth - 1).max(0);
-//                         continue;
-//                     } else if ch == '!' {
-//                         if let Some(ch) = chars2.next() {
-//                             if ch == '=' {
-//                                 cur = chars2;
-//                                 continue;
-//                             }
-//                         }
-//                     } else if ch == '=' {
-//                         if let Some(ch) = chars2.next() {
-//                             if ch != '=' {
-//                                 nesting_depth = 0;
-//                                 stack.clear();
-//                             } else {
-//                                 cur = chars2;
-//                             }
-//                         }
-//                         cur.next();
-//                     } else if ch == ';' || ch == '{' || ch == ':' {
-//                         nesting_depth = 0;
-//                         stack.clear();
-//                     } else {
-//                         // prev_ch.chars().next();
-
-//                         // (prev_ch == '|' && ch == '|') ||(prev_ch == '&'&&ch=='&')  {
-//                         // stack.clear();
-//                         // input = &input[chs..];
-//                         // continue
-//                     }
-//                 } else {
-//                     break;
-//                 }
-//             }
-//         }
-//     }
-//     // log::error!("x {:?} {:?} \"{}\"", substr_n(i, 8, "..."), list, substr_n(cur.as_str(), 8, "..."));
-//     log::info!("y {:?}", exprs.last());
-//     return Ok((cur.as_str(), exprs.last().unwrap().0.clone()));
-//     Err(NErr::Error(Error::new(i, ErrorKind::External)))
-// }
 
 fn template_arg(i: &str) -> IResult<&str, Ty> {
     context(
@@ -1129,10 +854,6 @@ fn attributes(i: &str) -> IResult<&str, Vec<Attribute<'_>>> {
     context("attributes", many0(rspace1(attribute)))(i)
 }
 
-fn statement(_i: &str) -> IResult<&str, StatmId> {
-    todo!()
-}
-
 fn line_comment(i: &str) -> IResult<&str, &str> {
     map_opt(
         tuple((tag("//"), take_till(|c| LINEBREAK.contains(&c)), linebreak)),
@@ -1176,18 +897,375 @@ fn comment(i: &str) -> IResult<&str, &str> {
     context("comment", alt((line_comment, block_comment)))(i)
 }
 
-fn compound_statement(i: &str) -> IResult<&str, CompoundStatement> {
+fn block_statement(i: &str) -> IResult<&str, StatmId> {
     map_opt(
-        tuple((
-            lspace0(attributes),
-            delimited(lspace0(xchar('{')), many0(statement), lspace0(xchar('}'))),
-        )),
-        |(attrs, statements)| Some(CompoundStatement { attrs, statements }),
+        delimited(lspace0(xchar('{')), many0(statement), lspace0(xchar('}'))),
+        |statements| {
+            Some(
+                CompoundStatement {
+                    attrs: vec![],
+                    stmts: statements,
+                }
+                .into(),
+            )
+        },
     )(i)
 }
 
-fn assignment_statement(i: &str) -> IResult<&str, AssignmentStatement> {
-    todo!()
+fn compound_statement(i: &str) -> IResult<&str, StatmId> {
+    map_opt(
+        tuple((lspace0(attributes), lspace0(block_statement))),
+        |(attrs, s)| {
+            // Some(CompoundStatement {
+            //     attrs,
+            //     stmts: statements,
+            // }.into())
+            None
+        },
+    )(i)
+}
+
+fn compound_assignment_operator(i: &str) -> IResult<&str, &str> {
+    alt((
+        tag("+="),
+        tag("-="),
+        tag("*="),
+        tag("/="),
+        tag("%="),
+        tag("&="),
+        tag("|="),
+        tag("^="),
+        tag(">=="),
+        tag("<=="),
+    ))(i)
+}
+
+// fn assignment_statement(i: &str) -> IResult<&str, StatmId> {
+//     alt((
+//         map_opt(
+//             tuple((tag("_"), lspace0(tag("=")), lspace0(expr))),
+//             |(_, _, expr)| Some(AssignmentStatement::new(placement_expr_id(), expr).into()),
+//         ),
+//         map_opt(
+//             tuple((
+//                 expr,
+//                 lspace0(alt((tag("="), compound_assignment_operator))),
+//                 lspace0(expr),
+//             )),
+//             |(lhs, oper, rhs)| {
+//                 let oper = SynToken::from_str(oper).unwrap();
+//                 Some(AssignmentStatement::new_op(lhs, oper, rhs).into())
+//             },
+//         ),
+//     ))(i)
+// }
+fn local_variable_decl(i: &str) -> IResult<&str, StatmId> {
+    context(
+        "local_variable_decl",
+        map_opt(
+            tuple((
+                tag("var"),
+                opt(lspace0(template_list)),
+                lspace0(optionally_typed_ident),
+            )),
+            |(_, list, ident)| None,
+        ),
+    )(i)
+}
+
+fn variable_or_value_statement(i: &str) -> IResult<&str, StatmId> {
+    context(
+        "variable_or_value_statement",
+        alt((
+            map_opt(
+                tuple((local_variable_decl, opt(preceded(lspace0(tag("=")), expr)))),
+                |(decl, assign)| None,
+            ),
+            map_opt(
+                tuple((
+                    tag("const"),
+                    lspace1(optionally_typed_ident),
+                    lspace0(tag("=")),
+                    lspace0(expr),
+                )),
+                |(_, i, _, expr)| None,
+            ),
+        )),
+    )(i)
+}
+
+fn variable_updating_statement(i: &str) -> IResult<&str, StatmId> {
+    alt((
+        map_opt(
+            tuple((tag("_"), lspace0(tag("=")), lspace0(expr))),
+            |(_, _, expr)| Some(AssignmentStatement::new(placement_expr_id(), expr).into()),
+        ),
+        map_opt(
+            tuple((
+                expr,
+                lspace0(alt((
+                    map_opt(tag("++"), |v| Some((v, placement_expr_id()))),
+                    map_opt(tag("--"), |v| Some((v, placement_expr_id()))),
+                    tuple((alt((tag("="), compound_assignment_operator)), lspace0(expr))),
+                ))),
+            )),
+            |(lhs, (oper, rhs))| {
+                let oper = SynToken::from_str(oper).unwrap();
+                Some(AssignmentStatement::new_op(lhs, oper, rhs).into())
+            },
+        ),
+    ))(i)
+}
+
+fn argument_expression_list(i: &str) -> IResult<&str, Vec<ExprId>> {
+    context(
+        "argument_list",
+        delimited(
+            lspace0(xchar('(')),
+            separated_list0_ext_sep(lspace0(xchar(',')), expr),
+            lspace0(xchar(')')),
+        ),
+    )(i)
+}
+
+fn for_update(i: &str) -> IResult<&str, StatmId> {
+    context("for_update", alt((
+        function_call_statement,
+        variable_updating_statement,
+    )))(i)
+}
+
+fn function_call_statement(i: &str) -> IResult<&str, StatmId> {
+    context(
+        "function_call_statement",
+        map_opt(
+            tuple((identifier, template_list, argument_expression_list)),
+            |(ident, template, args)| None,
+        ),
+    )(i)
+}
+
+fn for_init(i: &str) -> IResult<&str, StatmId> {
+    alt((variable_or_value_statement, variable_or_value_statement))(i)
+}
+
+fn for_statement(i: &str) -> IResult<&str, StatmId> {
+    context(
+        "for_statement",
+        map_opt(
+            preceded(
+                tag("for"),
+                tuple((
+                    delimited(
+                        lspace0(xchar('(')),
+                        tuple((
+                            lspace0(for_init),
+                            lspace0(xchar(';')),
+                            lspace0(expr),
+                            lspace0(xchar(';')),
+                            lspace0(for_update),
+                        )),
+                        lspace0(xchar(')')),
+                    ),
+                    lspace0(compound_statement),
+                )),
+            ),
+            |_| None,
+        ),
+    )(i)
+}
+
+fn break_statement(i: &str) -> IResult<&str, StatmId> {
+    context("break_statement", map_opt(tag("break"), |_| None))(i)
+}
+
+fn continue_statement(i: &str) -> IResult<&str, StatmId> {
+    context("continue_statement", map_opt(tag("continue"), |_| None))(i)
+}
+
+fn discard_statement(i: &str) -> IResult<&str, StatmId> {
+    context("discard_statement", map_opt(tag("discard"), |_| None))(i)
+}
+
+fn return_statement(i: &str) -> IResult<&str, StatmId> {
+    context(
+        "return_statement",
+        map_opt(preceded(tag("return"), lspace1(expr)), |expr| None),
+    )(i)
+}
+
+fn if_statement(i: &str) -> IResult<&str, StatmId> {
+    context(
+        "if_statement",
+        map_opt(
+            preceded(
+                tag("if"),
+                lspace1(tuple((
+                    expr,
+                    lspace1(compound_statement),
+                    many0(lspace0(preceded(
+                        tuple((tag("else"), lspace1(tag("if")))),
+                        lspace0(tuple((expr, lspace0(compound_statement)))),
+                    ))),
+                    opt(tuple((tag("else"), lspace1(compound_statement)))),
+                ))),
+            ),
+            |(if_cond, if_block, elifs, else_block)| None,
+        ),
+    )(i)
+}
+
+fn continuing_statement(i: &str) -> IResult<&str, StatmId> {
+    context(
+        "continuing_statement",
+        map_opt(
+            preceded(
+                tag("continuing"),
+                tuple((
+                    attributes,
+                    delimited(
+                        xchar('{'),
+                        tuple((
+                            many0(statement),
+                            lspace0(opt(delimited(
+                                tuple((tag("break"), lspace1(tag("if")))),
+                                expr,
+                                lspace0(xchar(';')),
+                            ))),
+                        )),
+                        lspace0(xchar('}')),
+                    ),
+                )),
+            ),
+            |_| None,
+        ),
+    )(i)
+}
+
+fn loop_statement(i: &str) -> IResult<&str, StatmId> {
+    context(
+        "loop_statement",
+        map_opt(
+            preceded(
+                tag("loop"),
+                tuple((
+                    attributes,
+                    delimited(
+                        xchar('{'),
+                        tuple((many0(statement), lspace0(opt(continuing_statement)))),
+                        lspace0(xchar('}')),
+                    ),
+                )),
+            ),
+            |_| None,
+        ),
+    )(i)
+}
+
+fn while_statement(i: &str) -> IResult<&str, StatmId> {
+    context(
+        "while_statement",
+        map_opt(
+            preceded(tag("while"), tuple((expr, compound_statement))),
+            |_| None,
+        ),
+    )(i)
+}
+
+fn case_selector(i: &str) -> IResult<&str, Option<ExprId>> {
+    context(
+        "case_selector",
+        alt((
+            map_opt(tag("default"), |_| Some(None)),
+            map_opt(expr, |e| Some(Some(e))),
+        )),
+    )(i)
+}
+
+fn switch_case(i: &str) -> IResult<&str, StatmId> {
+    context(
+        "switch_case",
+        alt((
+            map_opt(
+                tuple((
+                    tag("case"),
+                    lspace1(separated_list1_ext_sep(lspace0(xchar(',')), case_selector)),
+                    lspace0(opt(tag(":"))),
+                    lspace0(compound_statement),
+                )),
+                |_| None,
+            ),
+            map_opt(
+                tuple((
+                    tag("default"),
+                    lspace0(opt(tag(":"))),
+                    lspace1(compound_statement),
+                )),
+                |_| None,
+            ),
+        )),
+    )(i)
+}
+
+fn switch_statement(i: &str) -> IResult<&str, StatmId> {
+    context(
+        "switch_statement",
+        map_opt(
+            preceded(
+                tag("switch"),
+                tuple((
+                    expr,
+                    lspace1(attributes),
+                    delimited(
+                        lspace0(xchar('{')),
+                        many0(lspace0(switch_case)),
+                        lspace0(xchar('}')),
+                    ),
+                )),
+            ),
+            |_| None,
+        ),
+    )(i)
+}
+
+fn statement(i: &str) -> IResult<&str, StatmId> {
+    // try atributes
+    let attrs = attributes(i);
+    if let Ok((i, attrs)) = attrs {
+        if !attrs.is_empty() {
+            return context(
+                "statement_1",
+                alt((
+                    for_statement,
+                    block_statement,
+                    if_statement,
+                    loop_statement,
+                    while_statement,
+                    switch_statement,
+                )),
+            )(i);
+        }
+    }
+    context(
+        "statement_0",
+        alt((
+            for_statement,
+            block_statement,
+            if_statement,
+            loop_statement,
+            while_statement,
+            switch_statement,
+            // map res(xchar(';'), |_| {None}),
+            terminated(function_call_statement, lspace0(xchar(';'))),
+            terminated(variable_or_value_statement, lspace0(xchar(';'))),
+            terminated(variable_updating_statement, lspace0(xchar(';'))),
+            terminated(break_statement, lspace0(xchar(';'))),
+            terminated(continue_statement, lspace0(xchar(';'))),
+            terminated(discard_statement, lspace0(xchar(';'))),
+            terminated(return_statement, lspace0(xchar(';'))),
+            terminated(const_assert_statement, lspace0(xchar(';'))),
+        )),
+    )(i)
 }
 
 fn variable_decl(i: &str) -> IResult<&str, GlobalVariableDecl> {
@@ -1330,14 +1408,17 @@ fn function_decl(i: &str) -> IResult<&str, FunctionDecl> {
     )(i)
 }
 
-fn const_assert_statement(i: &str) -> IResult<&str, ConstAssertStatement> {
+fn const_assert_statement(i: &str) -> IResult<&str, StatmId> {
     context(
         "const_assert",
         map_opt(preceded(tag("const_assert"), lspace1(expr)), |expr| {
-            Some(ConstAssertStatement {
-                expr,
-                _pd: PhantomData::default(),
-            })
+            Some(
+                ConstAssertStatement {
+                    expr,
+                    _pd: PhantomData::default(),
+                }
+                .into(),
+            )
         }),
     )(i)
 }
@@ -1672,12 +1753,12 @@ pub mod tests {
     fn const_assert_statement_test() {
         let (_, c) = const_assert_statement("const_assert a!=y").unwrap();
         assert_eq!(
-            c.expr,
-            BinaryExpression::new(
+            c,
+            ConstAssertStatement::new(BinaryExpression::new(
                 IdentExpression::new_ident("a"),
                 SynToken::NotEqual,
                 IdentExpression::new_ident("y")
-            )
+            ))
             .into()
         );
     }
@@ -1770,11 +1851,8 @@ pub mod tests {
             decl,
             TypeAliasDecl {
                 name: "Arr",
-                ty: Ty::IdentTemplate((
-                    "array",
-                    TypeExpression::new(Ty::Ident("i32")).into()
-                ))
-                .into(),
+                ty: Ty::IdentTemplate(("array", TypeExpression::new(Ty::Ident("i32")).into()))
+                    .into(),
             }
         );
 
@@ -1845,22 +1923,22 @@ pub mod tests {
                     },
                     StructMember {
                         ident: "b",
-                        ty: Ty::IdentTemplate((
-                            "vec2",
-                            TypeExpression::new(Ty::Ident("T"))
-                            .into()
-                        )),
+                        ty: Ty::IdentTemplate(("vec2", TypeExpression::new(Ty::Ident("T")).into())),
                         attrs: vec!(),
                     },
                     StructMember {
                         ident: "c",
                         ty: Ty::IdentTemplate((
                             "array",
-                            ConcatExpression::new_concat([
-                                TypeExpression::new(Ty::Ident("i32")),
-                                TypeExpression::new(
-                                    Ty::Literal((Integer::Abstract(10).into(), "10")),
-                                )].into_iter()
+                            ConcatExpression::new_concat(
+                                [
+                                    TypeExpression::new(Ty::Ident("i32")),
+                                    TypeExpression::new(Ty::Literal((
+                                        Integer::Abstract(10).into(),
+                                        "10"
+                                    )),)
+                                ]
+                                .into_iter()
                             )
                             .into()
                         )),

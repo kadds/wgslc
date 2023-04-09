@@ -472,10 +472,37 @@ pub enum GlobalValueDecl<'a> {
 //     }
 // }
 
+pub trait Statm<'a>: Clone {
+    fn enum_statm(self) -> Statement<'a>;
+    fn extract<'b>(_: &'b Statement<'a>) -> Option<&'b Self>
+    where
+        Self: Sized,
+    {
+        None
+    }
+}
+macro_rules! use_statm_fn {
+    ($t: tt, $tt: tt) => {
+        impl<'a> Statm<'a> for $tt<'a> {
+            fn enum_statm(self) -> Statement<'a> {
+                Statement::$t(self)
+            }
+            fn extract<'b>(e: &'b Statement<'a>) -> Option<&'b Self>
+            where
+                Self: Sized,
+            {
+                match e {
+                    Statement::$t(u) => Some(u),
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+
 #[derive(Debug, EnumsIdArena, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Statement<'a> {
-    Block(BlockStatement<'a>),
     If(IfStatement<'a>),
     Compound(CompoundStatement<'a>),
     Assignment(AssignmentStatement<'a>),
@@ -489,7 +516,7 @@ pub enum Statement<'a> {
     FunctionCall(FunctionCallStatement<'a>),
     ConstAssert(ConstAssertStatement<'a>),
     Discard(DiscardStatement<'a>),
-
+    // Concat(ConcatStatement<'a>),
     Placeholder,
 }
 
@@ -534,18 +561,14 @@ macro_rules! use_expr_new_for_statement {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct CompoundStatement<'a> {
-    pub attrs: Vec<Attribute<'a>>,
-    pub statements: Vec<StatmId>,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct AssignmentStatement<'a> {
     pub lhs: ExprId,
     pub rhs: ExprId,
     pub op: SynToken,
     pub _pd: PhantomData<&'a ()>,
 }
+
+use_statm_fn!(Assignment, AssignmentStatement);
 
 impl<'a> AssignmentStatement<'a> {
     pub fn new<E: Into<ExprId>, F: Into<ExprId>>(lhs: E, rhs: F) -> Self {
@@ -584,16 +607,17 @@ impl<'a> IncrementStatement<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct BlockStatement<'a> {
+pub struct CompoundStatement<'a> {
     pub stmts: Vec<StatmId>,
-    pub _pd: PhantomData<&'a ()>,
+    pub attrs: Vec<Attribute<'a>>,
 }
+use_statm_fn!(Compound, CompoundStatement);
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct IfStatement<'a> {
     pub cond: ExprId,
-    pub accept: BlockStatement<'a>,
-    pub reject: BlockStatement<'a>,
+    pub accept: CompoundStatement<'a>,
+    pub reject: CompoundStatement<'a>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -665,6 +689,7 @@ pub struct ConstAssertStatement<'a> {
     pub expr: ExprId,
     pub _pd: PhantomData<&'a ()>,
 }
+use_statm_fn!(ConstAssert, ConstAssertStatement);
 use_expr_new_for_statement!(ConstAssertStatement);
 
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
@@ -820,7 +845,7 @@ pub enum GlobalDecl<'a> {
     TypeAliasDecl(TypeAliasDecl<'a>),
     StructDecl(StructDecl<'a>),
     FunctionDecl(FunctionDecl<'a>),
-    GlobalConstAssertStatement(ConstAssertStatement<'a>),
+    GlobalConstAssertStatement(StatmId),
     None,
 }
 
@@ -868,6 +893,18 @@ where
         CTX.with(move |ctx| {
             let mut c = ctx.borrow_mut();
             unsafe { ExprId(c.arena.alloc(std::mem::transmute(value.enum_expr()))) }
+        })
+    }
+}
+
+impl<'a, S> From<S> for StatmId
+where
+    S: Statm<'a>,
+{
+    fn from(value: S) -> Self {
+        CTX.with(move |ctx| {
+            let mut c = ctx.borrow_mut();
+            unsafe { StatmId(c.statement_arena.alloc(std::mem::transmute(value.enum_statm()))) }
         })
     }
 }

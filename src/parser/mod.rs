@@ -101,6 +101,56 @@ where
     }
 }
 
+pub fn separated_list0_ext_sep<I, O, O2, E, F, G>(
+    mut sep: G,
+    mut f: F,
+) -> impl FnMut(I) -> IResult<I, Vec<O>, E>
+where
+    I: Clone + nom::InputLength,
+    F: nom::Parser<I, O, E>,
+    G: nom::Parser<I, O2, E>,
+    E: nom::error::ParseError<I>,
+{
+    move |mut i: I| {
+        let mut res = Vec::new();
+
+        // Parse the first element
+        match f.parse(i.clone()) {
+            Err(e) => return Ok((i, res)),
+            Ok((i1, o)) => {
+                res.push(o);
+                i = i1;
+            }
+        }
+
+        loop {
+            let len = i.input_len();
+            match sep.parse(i.clone()) {
+                Err(nom::Err::Error(_)) => return Ok((i, res)),
+                Err(e) => return Err(e),
+                Ok((i1, _)) => {
+                    // infinite loop check: the parser must always consume
+                    if i1.input_len() == len {
+                        return Err(nom::Err::Error(E::from_error_kind(
+                            i1,
+                            nom::error::ErrorKind::SeparatedList,
+                        )));
+                    }
+
+                    match f.parse(i1.clone()) {
+                        Err(nom::Err::Failure(f)) => return Err(nom::Err::Failure(f)),
+                        Err(_) => return Ok((i1, res)),
+                        Ok((i2, o)) => {
+                            res.push(o);
+                            i = i2;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub fn dbg<F, I, O, E>(mut f: F, context: &'static str) -> impl FnMut(I) -> IResult<I, O, E>
 where
     F: FnMut(I) -> IResult<I, O, E>,
