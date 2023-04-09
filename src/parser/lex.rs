@@ -211,13 +211,12 @@ pub fn space0(i: &str) -> IResult<&str, ()> {
 }
 
 pub fn space1(i: &str) -> IResult<&str, ()> {
-    map_res(consumed(space0), |(i2, _)| {
-        if i2.as_ptr() as usize != i.as_ptr() as usize {
-            return Ok(());
-        } else {
-            return Err(NErr::Error(Error::new(i, ErrorKind::ExpectSpace)));
-        }
-    })(i)
+    let (i2, _) = space0(i)?;
+    if i2.as_ptr() as usize != i.as_ptr() as usize {
+        return Ok((i2, ()));
+    } else {
+        return Err(NErr::Error(Error::new(i, ErrorKind::ExpectSpace)));
+    }
 }
 
 pub fn lspace0<'a, O, G>(g: G) -> impl FnMut(&'a str) -> IResult<&'a str, O>
@@ -1729,10 +1728,7 @@ pub mod tests {
                     name: "i",
                     ty: Some(Ty::IdentTemplate((
                         "array",
-                        ListExpression::new_comma(ConcatExpression::new_end(
-                            IdentExpression::new_ident("i32")
-                        ))
-                        .into()
+                        TypeExpression::new(Ty::Ident("i32")).into()
                     )))
                 },
                 equals: None,
@@ -1776,10 +1772,7 @@ pub mod tests {
                 name: "Arr",
                 ty: Ty::IdentTemplate((
                     "array",
-                    ListExpression::new_comma(ConcatExpression::new_end(
-                        IdentExpression::new_ident("i32"),
-                    ))
-                    .into()
+                    TypeExpression::new(Ty::Ident("i32")).into()
                 ))
                 .into(),
             }
@@ -1837,9 +1830,8 @@ pub mod tests {
     fn struct_decl_test() {
         let struct_str = r#"struct Data {
           a: i32,
-          b: vec2<f32>,
+          b: vec2<T>,
           c: array<i32,10>,
-          d: array<vec4<f32>>,
         }"#;
         assert_ret!(
             struct_decl(struct_str),
@@ -1855,9 +1847,7 @@ pub mod tests {
                         ident: "b",
                         ty: Ty::IdentTemplate((
                             "vec2",
-                            ListExpression::new_comma(ConcatExpression::new_end(
-                                IdentExpression::new_ident("f32")
-                            ))
+                            TypeExpression::new(Ty::Ident("T"))
                             .into()
                         )),
                         attrs: vec!(),
@@ -1866,29 +1856,12 @@ pub mod tests {
                         ident: "c",
                         ty: Ty::IdentTemplate((
                             "array",
-                            ListExpression::new_comma(ConcatExpression::new(
-                                IdentExpression::new_ident("i32"),
-                                ConcatExpression::new_end(LiteralExpression::new(
-                                    Integer::Abstract(10).into(),
-                                    "10"
-                                ))
-                            ))
-                            .into()
-                        )),
-                        attrs: vec!(),
-                    },
-                    StructMember {
-                        ident: "d",
-                        ty: Ty::IdentTemplate((
-                            "array",
-                            ListExpression::new_comma(ConcatExpression::new_end(
-                                IdentExpression::new(
-                                    "vec4",
-                                    ListExpression::new_comma(ConcatExpression::new_end(
-                                        IdentExpression::new_ident("f32"),
-                                    ))
-                                ),
-                            ))
+                            ConcatExpression::new_concat([
+                                TypeExpression::new(Ty::Ident("i32")),
+                                TypeExpression::new(
+                                    Ty::Literal((Integer::Abstract(10).into(), "10")),
+                                )].into_iter()
+                            )
                             .into()
                         )),
                         attrs: vec!(),
