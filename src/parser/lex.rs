@@ -6,10 +6,9 @@ use super::ast::*;
 use super::token::*;
 use super::*;
 use nom::bytes::complete::take_till;
-use nom::character::complete::{char as xchar, one_of};
+use nom::character::complete::{char as xchar1, one_of};
 use nom::combinator::consumed;
 use nom::combinator::cut;
-use nom::combinator::eof;
 use nom::combinator::peek;
 use nom::combinator::recognize;
 use nom::error::context;
@@ -25,6 +24,17 @@ use nom::{
 };
 type NErr<E> = nom::Err<E>;
 type CErr<'a> = NErr<Error<'a>>;
+
+pub fn xchar<'a>(c: char) -> impl Fn(&'a str) -> IResult<'a, &'a str, char> {
+    use nom::Slice;
+    move |i: &'a str| match (i).chars().next().map(|t| {
+        let b = t == c;
+        (&c, b)
+    }) {
+        Some((c, true)) => Ok((i.slice(c.len_utf8()..), *c)),
+        _ => Err(NErr::Error(Error::new(i, ErrorKind::ExpectChar(c)))),
+    }
+}
 
 pub type IResult<'a, I, O> = Result<(I, O), CErr<'a>>;
 
@@ -649,9 +659,8 @@ fn template_inner(i: &str) -> IResult<&str, ExprId> {
             if tys.len() == 0 {
                 return Err(NErr::Error(Error::new(i, ErrorKind::ExpectTemplateIdent)));
             }
-            let expr =
-                ConcatExpression::new_concat(tys.into_iter().map(|v| TypeExpression::new(v)));
-            Ok::<_, CErr>(expr)
+            let expr = ListExpression::new_comma(tys.into_iter().map(|v| TypeExpression::new(v)));
+            Ok::<_, CErr>(expr.into())
         },
     )(i)
 }
@@ -720,7 +729,10 @@ fn optionally_typed_ident(i: &str) -> IResult<&str, OptionallyTypedIdent<'_>> {
         map_opt(
             tuple((
                 identifier,
-                opt(preceded(lspace0(xchar(':')), lspace0(type_specifier))),
+                context(
+                    "ident_typed",
+                    opt(preceded(lspace0(xchar(':')), lspace0(type_specifier))),
+                ),
             )),
             |(ident, ty)| Some(OptionallyTypedIdent { name: ident, ty }),
         ),
@@ -763,7 +775,7 @@ fn function_header(i: &str) -> IResult<&str, FunctionDecl> {
                             "function_output",
                             preceded(
                                 lspace0(tag("->")),
-                                tuple((attributes, lspace0(type_specifier))),
+                                tuple((lspace0(attributes), lspace0(type_specifier))),
                             ),
                         )),
                     ))),
@@ -774,7 +786,7 @@ fn function_header(i: &str) -> IResult<&str, FunctionDecl> {
                     name,
                     inputs,
                     output,
-                    block: placement_statm_id(),
+                    block: placement_stmt_id(),
                     attrs: vec![],
                 })
             },
@@ -897,31 +909,41 @@ fn comment(i: &str) -> IResult<&str, &str> {
     context("comment", alt((line_comment, block_comment)))(i)
 }
 
-fn block_statement(i: &str) -> IResult<&str, StatmId> {
-    map_opt(
-        delimited(lspace0(xchar('{')), many0(statement), lspace0(xchar('}'))),
-        |statements| {
-            Some(
-                CompoundStatement {
-                    attrs: vec![],
-                    stmts: statements,
-                }
-                .into(),
-            )
-        },
+fn block_statement(i: &str) -> IResult<&str, StmtId> {
+    context(
+        "block_statement",
+        map_opt(
+            delimited(
+                xchar('{'),
+                context("statements", many0(dbg(lspace0(statement), "s"))),
+                lspace0(xchar('}')),
+            ),
+            |statements| {
+                let stmts = ListStatement::new(statements.into_iter()).into();
+                Some(
+                    CompoundStatement {
+                        attrs: vec![],
+                        stmts,
+                    }
+                    .into(),
+                )
+            },
+        ),
     )(i)
 }
 
-fn compound_statement(i: &str) -> IResult<&str, StatmId> {
-    map_opt(
-        tuple((lspace0(attributes), lspace0(block_statement))),
-        |(attrs, s)| {
-            // Some(CompoundStatement {
-            //     attrs,
-            //     stmts: statements,
-            // }.into())
-            None
-        },
+fn compound_statement(i: &str) -> IResult<&str, StmtId> {
+    context(
+        "compound_statement",
+        map_opt(
+            tuple((lspace0(attributes), lspace0(block_statement))),
+            |(attrs, s)| {
+                update_stmt_for(s, |s1: &mut CompoundStatement| {
+                    s1.attrs = attrs;
+                });
+                Some(s)
+            },
+        ),
     )(i)
 }
 
@@ -940,64 +962,65 @@ fn compound_assignment_operator(i: &str) -> IResult<&str, &str> {
     ))(i)
 }
 
-// fn assignment_statement(i: &str) -> IResult<&str, StatmId> {
-//     alt((
-//         map_opt(
-//             tuple((tag("_"), lspace0(tag("=")), lspace0(expr))),
-//             |(_, _, expr)| Some(AssignmentStatement::new(placement_expr_id(), expr).into()),
-//         ),
-//         map_opt(
-//             tuple((
-//                 expr,
-//                 lspace0(alt((tag("="), compound_assignment_operator))),
-//                 lspace0(expr),
-//             )),
-//             |(lhs, oper, rhs)| {
-//                 let oper = SynToken::from_str(oper).unwrap();
-//                 Some(AssignmentStatement::new_op(lhs, oper, rhs).into())
-//             },
-//         ),
-//     ))(i)
-// }
-fn local_variable_decl(i: &str) -> IResult<&str, StatmId> {
+fn local_variable_decl(i: &str) -> IResult<&str, DeclStatement> {
     context(
         "local_variable_decl",
         map_opt(
             tuple((
                 tag("var"),
                 opt(lspace0(template_list)),
-                lspace0(optionally_typed_ident),
+                cut(lspace0(optionally_typed_ident)),
             )),
-            |(_, list, ident)| None,
+            |(t, list, ident)| {
+                Some(DeclStatement {
+                    decl_ty: t,
+                    template_list: list,
+                    ident: ident,
+                    assignment: None,
+                })
+            },
         ),
     )(i)
 }
 
-fn variable_or_value_statement(i: &str) -> IResult<&str, StatmId> {
+fn variable_or_value_statement(i: &str) -> IResult<&str, StmtId> {
     context(
         "variable_or_value_statement",
         alt((
             map_opt(
                 tuple((local_variable_decl, opt(preceded(lspace0(tag("=")), expr)))),
-                |(decl, assign)| None,
+                |(mut decl, assign)| {
+                    decl.assignment = assign;
+                    Some(decl.into())
+                },
             ),
             map_opt(
                 tuple((
-                    tag("const"),
+                    alt((tag("const"), tag("let"))),
                     lspace1(optionally_typed_ident),
-                    lspace0(tag("=")),
-                    lspace0(expr),
+                    cut(lspace0(tag("="))),
+                    cut(lspace0(expr)),
                 )),
-                |(_, i, _, expr)| None,
+                |(t, i, _, expr)| {
+                    Some(
+                        DeclStatement {
+                            decl_ty: t,
+                            ident: i,
+                            template_list: None,
+                            assignment: Some(expr),
+                        }
+                        .into(),
+                    )
+                },
             ),
         )),
     )(i)
 }
 
-fn variable_updating_statement(i: &str) -> IResult<&str, StatmId> {
+fn variable_updating_statement(i: &str) -> IResult<&str, StmtId> {
     alt((
         map_opt(
-            tuple((tag("_"), lspace0(tag("=")), lspace0(expr))),
+            tuple((tag("_"), lspace0(tag("=")), cut(lspace0(expr)))),
             |(_, _, expr)| Some(AssignmentStatement::new(placement_expr_id(), expr).into()),
         ),
         map_opt(
@@ -1028,105 +1051,165 @@ fn argument_expression_list(i: &str) -> IResult<&str, Vec<ExprId>> {
     )(i)
 }
 
-fn for_update(i: &str) -> IResult<&str, StatmId> {
-    context("for_update", alt((
-        function_call_statement,
-        variable_updating_statement,
-    )))(i)
+fn for_update(i: &str) -> IResult<&str, StmtId> {
+    context(
+        "for_update",
+        alt((function_call_statement, variable_updating_statement)),
+    )(i)
 }
 
-fn function_call_statement(i: &str) -> IResult<&str, StatmId> {
+fn function_call_statement(i: &str) -> IResult<&str, StmtId> {
     context(
         "function_call_statement",
         map_opt(
-            tuple((identifier, template_list, argument_expression_list)),
-            |(ident, template, args)| None,
+            tuple((
+                identifier,
+                lspace0(opt(template_list)),
+                lspace0(argument_expression_list),
+            )),
+            |(ident, template, args)| {
+                Some(
+                    FunctionCallStatement::new(FunctionCallExpression::new(
+                        IdentExpression {
+                            name: ident,
+                            template_post_ident: template,
+                        },
+                        args.into_iter(),
+                    ))
+                    .into(),
+                )
+            },
         ),
     )(i)
 }
 
-fn for_init(i: &str) -> IResult<&str, StatmId> {
-    alt((variable_or_value_statement, variable_or_value_statement))(i)
+fn for_init(i: &str) -> IResult<&str, StmtId> {
+    context(
+        "for_init",
+        alt((variable_or_value_statement, variable_or_value_statement)),
+    )(i)
 }
 
-fn for_statement(i: &str) -> IResult<&str, StatmId> {
+fn for_statement(i: &str) -> IResult<&str, StmtId> {
     context(
         "for_statement",
-        map_opt(
             preceded(
                 tag("for"),
+                map_opt(
                 tuple((
-                    delimited(
-                        lspace0(xchar('(')),
-                        tuple((
-                            lspace0(for_init),
-                            lspace0(xchar(';')),
-                            lspace0(expr),
-                            lspace0(xchar(';')),
-                            lspace0(for_update),
-                        )),
-                        lspace0(xchar(')')),
-                    ),
-                    lspace0(compound_statement),
+                    cut(context(
+                        "for_header",
+                        delimited(
+                            lspace0(xchar('(')),
+                            lspace0(tuple((
+                                opt(rspace0(for_init)),
+                                rspace0(xchar(';')),
+                                opt(rspace0(context("for_expr", expr))),
+                                rspace0(xchar(';')),
+                                opt(for_update),
+                            ))),
+                            lspace0(xchar(')')),
+                        ),
+                    )),
+                    context("for_body", lspace0(cut(compound_statement))),
                 )),
+            |((init, _, cond, _, update), body)| {
+                Some(ForStatement {
+                    init,
+                    cond,
+                    update,
+                    body,
+                    _pd: PhantomData::default(),
+                }.into())
+            },
             ),
-            |_| None,
         ),
     )(i)
 }
 
-fn break_statement(i: &str) -> IResult<&str, StatmId> {
-    context("break_statement", map_opt(tag("break"), |_| None))(i)
-}
-
-fn continue_statement(i: &str) -> IResult<&str, StatmId> {
-    context("continue_statement", map_opt(tag("continue"), |_| None))(i)
-}
-
-fn discard_statement(i: &str) -> IResult<&str, StatmId> {
-    context("discard_statement", map_opt(tag("discard"), |_| None))(i)
-}
-
-fn return_statement(i: &str) -> IResult<&str, StatmId> {
+fn break_statement(i: &str) -> IResult<&str, StmtId> {
     context(
-        "return_statement",
-        map_opt(preceded(tag("return"), lspace1(expr)), |expr| None),
+        "break_statement",
+        map_opt(tag("break"), |_| Some(BreakStatement::default().into())),
     )(i)
 }
 
-fn if_statement(i: &str) -> IResult<&str, StatmId> {
+fn continue_statement(i: &str) -> IResult<&str, StmtId> {
+    context(
+        "continue_statement",
+        map_opt(tag("continue"), |_| {
+            Some(ContinueStatement::default().into())
+        }),
+    )(i)
+}
+
+fn discard_statement(i: &str) -> IResult<&str, StmtId> {
+    context(
+        "discard_statement",
+        map_opt(tag("discard"), |_| Some(DiscardStatement::default().into())),
+    )(i)
+}
+
+fn return_statement(i: &str) -> IResult<&str, StmtId> {
+    context(
+        "return_statement",
+        map_opt(preceded(tag("return"), cut(lspace1(expr))), |expr| {
+            Some(ReturnStatement::new(expr).into())
+        }),
+    )(i)
+}
+
+fn if_statement(i: &str) -> IResult<&str, StmtId> {
     context(
         "if_statement",
         map_opt(
             preceded(
                 tag("if"),
-                lspace1(tuple((
-                    expr,
-                    lspace1(compound_statement),
+                lspace1(cut(tuple((
+                    context("if_expr", expr),
+                    context("if_body", lspace1(compound_statement)),
                     many0(lspace0(preceded(
                         tuple((tag("else"), lspace1(tag("if")))),
-                        lspace0(tuple((expr, lspace0(compound_statement)))),
+                        cut(lspace0(tuple((expr, lspace0(compound_statement))))),
                     ))),
-                    opt(tuple((tag("else"), lspace1(compound_statement)))),
-                ))),
+                    opt(preceded(lspace0(tag("else")), cut(lspace1(compound_statement)))),
+                )))),
             ),
-            |(if_cond, if_block, elifs, else_block)| None,
+            |(if_cond, if_block, elifs, else_block)| {
+                let mut else_block = else_block.map(|v| ElseStatement {accept: v, _pd:PhantomData::default()}.into());
+                for (cond, body) in elifs {
+                    let stmt = ElIfStatement {
+                        cond,
+                        accept: body,
+                        reject: else_block,
+                        _pd: PhantomData::default(),
+                    }.into();
+                    else_block = Some(stmt);
+                }
+
+                Some(IfStatement {
+                    cond: if_cond.into(),
+                    accept: if_block,
+                    reject: else_block,
+                    _pd: PhantomData::default(),
+                }.into())
+            },
         ),
     )(i)
 }
 
-fn continuing_statement(i: &str) -> IResult<&str, StatmId> {
+fn continuing_statement(i: &str) -> IResult<&str, StmtId> {
     context(
         "continuing_statement",
-        map_opt(
             preceded(
                 tag("continuing"),
+        map_opt(
                 tuple((
                     attributes,
                     delimited(
-                        xchar('{'),
+                        lspace0(xchar('{')),
                         tuple((
-                            many0(statement),
+                            many0(lspace0(statement)),
                             lspace0(opt(delimited(
                                 tuple((tag("break"), lspace1(tag("if")))),
                                 expr,
@@ -1136,53 +1219,80 @@ fn continuing_statement(i: &str) -> IResult<&str, StatmId> {
                         lspace0(xchar('}')),
                     ),
                 )),
+            |(attrs, (body, break_if))| {
+                let body_stmts = ListStatement::new(body.into_iter());
+                Some(ContinuingStatement {
+                    attrs,
+                    body: body_stmts.into(),
+                    break_if,
+                    _pd: PhantomData::default(),
+                }.into())
+            },
             ),
-            |_| None,
         ),
     )(i)
 }
 
-fn loop_statement(i: &str) -> IResult<&str, StatmId> {
+fn loop_statement(i: &str) -> IResult<&str, StmtId> {
     context(
         "loop_statement",
-        map_opt(
             preceded(
                 tag("loop"),
+        map_opt(
                 tuple((
                     attributes,
-                    delimited(
-                        xchar('{'),
-                        tuple((many0(statement), lspace0(opt(continuing_statement)))),
+                    cut(delimited(
+                        lspace0(xchar('{')),
+                        tuple((
+                            many0(lspace0(statement)),
+                            lspace0(opt(continuing_statement)),
+                        )),
                         lspace0(xchar('}')),
-                    ),
+                    )),
                 )),
-            ),
-            |_| None,
+            |(attrs, (body, continuing))| {
+                let body_stmts = ListStatement::new(body.into_iter());
+                Some(
+                    LoopStatement {
+                        attrs,
+                        body: body_stmts.into(),
+                        continuing,
+                        _pd: PhantomData::default(),
+                    }.into()
+                )
+            },
+            )
         ),
     )(i)
 }
 
-fn while_statement(i: &str) -> IResult<&str, StatmId> {
+fn while_statement(i: &str) -> IResult<&str, StmtId> {
     context(
         "while_statement",
         map_opt(
-            preceded(tag("while"), tuple((expr, compound_statement))),
-            |_| None,
+            preceded(tag("while"), cut(tuple((expr, compound_statement)))),
+            |(cond, body)| {
+                Some(WhileStatement{
+                    cond,
+                    body,
+                    _pd: PhantomData::default(),
+                }.into())
+            },
         ),
     )(i)
 }
 
-fn case_selector(i: &str) -> IResult<&str, Option<ExprId>> {
+fn case_selector(i: &str) -> IResult<&str, ExprId> {
     context(
         "case_selector",
         alt((
-            map_opt(tag("default"), |_| Some(None)),
-            map_opt(expr, |e| Some(Some(e))),
+            map_opt(tag("default"), |t| Some(IdentExpression::new_ident(t).into())),
+            map_opt(expr, |e| Some(e)),
         )),
     )(i)
 }
 
-fn switch_case(i: &str) -> IResult<&str, StatmId> {
+fn switch_case(i: &str) -> IResult<&str, StmtId> {
     context(
         "switch_case",
         alt((
@@ -1193,7 +1303,14 @@ fn switch_case(i: &str) -> IResult<&str, StatmId> {
                     lspace0(opt(tag(":"))),
                     lspace0(compound_statement),
                 )),
-                |_| None,
+                |(_, selector, _, body)| {
+                    let selector = ListExpression::new_comma(selector.into_iter()).into();
+                    Some(CaseStatement {
+                        selector: Some(selector),
+                        body,
+                        _pd: PhantomData::default(),
+                    }.into())
+                },
             ),
             map_opt(
                 tuple((
@@ -1201,19 +1318,25 @@ fn switch_case(i: &str) -> IResult<&str, StatmId> {
                     lspace0(opt(tag(":"))),
                     lspace1(compound_statement),
                 )),
-                |_| None,
+                |(_, _, body)| {
+                    Some(CaseStatement {
+                        selector: None,
+                        body,
+                        _pd: PhantomData::default(),
+                    }.into())
+                },
             ),
         )),
     )(i)
 }
 
-fn switch_statement(i: &str) -> IResult<&str, StatmId> {
+fn switch_statement(i: &str) -> IResult<&str, StmtId> {
     context(
         "switch_statement",
         map_opt(
             preceded(
                 tag("switch"),
-                tuple((
+                cut(tuple((
                     expr,
                     lspace1(attributes),
                     delimited(
@@ -1221,15 +1344,29 @@ fn switch_statement(i: &str) -> IResult<&str, StatmId> {
                         many0(lspace0(switch_case)),
                         lspace0(xchar('}')),
                     ),
-                )),
+                ))),
             ),
-            |_| None,
+            |(expr, attrs, cases)| {
+                let cases = ListStatement::new(cases.into_iter()).into();
+                Some(SwitchStatement {
+                    selector: expr,
+                    attrs,
+                    cases,
+                    _pd: PhantomData::default(),
+                }.into())
+            },
         ),
     )(i)
 }
 
-fn statement(i: &str) -> IResult<&str, StatmId> {
-    // try atributes
+fn statement(mut i: &str) -> IResult<&str, StmtId> {
+    let (i2, _) = opt(rspace0(xchar(';')))(i)?;
+    i = i2;
+    if let Some(c) = i.chars().next() {
+        if c == '}' {
+            return Err(NErr::Error(Error::new("", ErrorKind::EndStatement)))
+        }
+    }
     let attrs = attributes(i);
     if let Ok((i, attrs)) = attrs {
         if !attrs.is_empty() {
@@ -1237,11 +1374,11 @@ fn statement(i: &str) -> IResult<&str, StatmId> {
                 "statement_1",
                 alt((
                     for_statement,
-                    block_statement,
                     if_statement,
                     loop_statement,
                     while_statement,
                     switch_statement,
+                    block_statement,
                 )),
             )(i);
         }
@@ -1250,20 +1387,19 @@ fn statement(i: &str) -> IResult<&str, StatmId> {
         "statement_0",
         alt((
             for_statement,
-            block_statement,
             if_statement,
             loop_statement,
             while_statement,
             switch_statement,
-            // map res(xchar(';'), |_| {None}),
-            terminated(function_call_statement, lspace0(xchar(';'))),
-            terminated(variable_or_value_statement, lspace0(xchar(';'))),
-            terminated(variable_updating_statement, lspace0(xchar(';'))),
             terminated(break_statement, lspace0(xchar(';'))),
             terminated(continue_statement, lspace0(xchar(';'))),
             terminated(discard_statement, lspace0(xchar(';'))),
             terminated(return_statement, lspace0(xchar(';'))),
             terminated(const_assert_statement, lspace0(xchar(';'))),
+            terminated(function_call_statement, lspace0(xchar(';'))),
+            terminated(variable_or_value_statement, lspace0(xchar(';'))),
+            terminated(variable_updating_statement, lspace0(xchar(';'))),
+            block_statement,
         )),
     )(i)
 }
@@ -1398,17 +1534,18 @@ fn function_decl(i: &str) -> IResult<&str, FunctionDecl> {
             tuple((
                 attributes,
                 lspace0(function_header),
-                lspace0(compound_statement),
+                cut(context("function_body", lspace0(compound_statement))),
             )),
-            |(attrs, mut decl, _detail)| {
+            |(attrs, mut decl, detail)| {
                 decl.attrs = attrs;
+                decl.block = detail;
                 Some(decl)
             },
         ),
     )(i)
 }
 
-fn const_assert_statement(i: &str) -> IResult<&str, StatmId> {
+fn const_assert_statement(i: &str) -> IResult<&str, StmtId> {
     context(
         "const_assert",
         map_opt(preceded(tag("const_assert"), lspace1(expr)), |expr| {
@@ -1434,11 +1571,15 @@ fn enable_directive(i: &str) -> IResult<&str, &str> {
     )(i)
 }
 
-fn global_decl(i: &str) -> IResult<&str, GlobalDecl<'_>> {
+fn global_decl(mut i: &str) -> IResult<&str, GlobalDecl<'_>> {
+    let (i2, _) = opt(rspace0(xchar(';')))(i)?;
+    i = i2;
+
     preceded(
         space0,
         alt((
-            map_opt(xchar(';'), |_| Some(GlobalDecl::None)),
+            map_opt(function_decl, |v| Some(GlobalDecl::FunctionDecl(v))),
+            map_opt(struct_decl, |v| Some(GlobalDecl::StructDecl(v))),
             map_opt(terminated(global_variable_decl, lspace0(xchar(';'))), |v| {
                 Some(GlobalDecl::GlobalVariableDecl(v))
             }),
@@ -1448,8 +1589,6 @@ fn global_decl(i: &str) -> IResult<&str, GlobalDecl<'_>> {
             map_opt(terminated(type_alias_decl, lspace0(xchar(';'))), |v| {
                 Some(GlobalDecl::TypeAliasDecl(v))
             }),
-            map_opt(struct_decl, |v| Some(GlobalDecl::StructDecl(v))),
-            map_opt(function_decl, |v| Some(GlobalDecl::FunctionDecl(v))),
             map_opt(
                 terminated(const_assert_statement, lspace0(xchar(';'))),
                 |v| Some(GlobalDecl::GlobalConstAssertStatement(v)),
@@ -1501,45 +1640,52 @@ pub mod tests {
     fn template_test() {
         assert_ret!(
             template_list("<array<vec4<f32, f64>>, int<i32, mat<u32, 4>>>"),
-            ConcatExpression::new_concat(
+            ListExpression::new_comma(
                 [
                     TypeExpression::new(Ty::IdentTemplate((
                         "array",
-                        ConcatExpression::new_concat(
+                        ListExpression::new_comma(
                             [TypeExpression::new(Ty::IdentTemplate((
                                 "vec4",
-                                ConcatExpression::new_concat(
+                                ListExpression::new_comma(
                                     [
                                         TypeExpression::new(Ty::Ident("f32")),
                                         TypeExpression::new(Ty::Ident("f64"))
                                     ]
                                     .into_iter()
                                 )
+                                .into()
                             )))]
                             .into_iter()
                         )
+                        .into()
                     ))),
                     TypeExpression::new(Ty::IdentTemplate((
                         "int",
-                        ConcatExpression::new_concat(
+                        ListExpression::new_comma(
                             [
                                 TypeExpression::new(Ty::Ident("i32")),
-                                TypeExpression::new(Ty::IdentTemplate((
-                                    "mat",
-                                    ConcatExpression::new_concat(
-                                        [
-                                            TypeExpression::new(Ty::Ident("u32")),
-                                            TypeExpression::new(Ty::Literal((
-                                                Integer::Abstract(4).into(),
-                                                "4"
-                                            )))
-                                        ]
-                                        .into_iter()
+                                TypeExpression::new(Ty::IdentTemplate(
+                                    (
+                                        "mat",
+                                        ListExpression::new_comma(
+                                            [
+                                                TypeExpression::new(Ty::Ident("u32")),
+                                                TypeExpression::new(Ty::Literal((
+                                                    Integer::Abstract(4).into(),
+                                                    "4"
+                                                )))
+                                            ]
+                                            .into_iter()
+                                        )
+                                        .into()
                                     )
-                                )))
+                                        .into()
+                                ))
                             ]
                             .into_iter()
                         )
+                        .into()
                     )))
                 ]
                 .into_iter()
@@ -1549,7 +1695,7 @@ pub mod tests {
 
         assert_ret!(
             template_list("<i32, 5>"),
-            ConcatExpression::new_concat(
+            ListExpression::new_comma(
                 [
                     TypeExpression::new(Ty::Ident("i32")),
                     TypeExpression::new(Ty::Literal((Integer::Abstract(5).into(), "5")))
@@ -1560,11 +1706,18 @@ pub mod tests {
         );
         assert_ret!(
             template_list("<i32>"),
-            TypeExpression::new(Ty::Ident("i32")).into()
+            ListExpression::new_comma([TypeExpression::new(Ty::Ident("i32"))].into_iter()).into()
         );
         assert_ret!(
             template_list("<5>"),
-            TypeExpression::new(Ty::Literal((Integer::Abstract(5).into(), "5"))).into()
+            ListExpression::new_comma(
+                [TypeExpression::new(Ty::Literal((
+                    Integer::Abstract(5).into(),
+                    "5"
+                )))]
+                .into_iter()
+            )
+            .into()
         );
 
         // assert_ret!(
@@ -1780,7 +1933,7 @@ pub mod tests {
                     }
                 ],
                 output: Some((vec!(), Ty::Ident("i32"))),
-                block: placement_statm_id(),
+                block: placement_stmt_id(),
                 attrs: vec!(),
             }
         );
@@ -1809,7 +1962,10 @@ pub mod tests {
                     name: "i",
                     ty: Some(Ty::IdentTemplate((
                         "array",
-                        TypeExpression::new(Ty::Ident("i32")).into()
+                        ListExpression::new_comma(
+                            [TypeExpression::new(Ty::Ident("i32"))].into_iter()
+                        )
+                        .into()
                     )))
                 },
                 equals: None,
@@ -1851,8 +2007,12 @@ pub mod tests {
             decl,
             TypeAliasDecl {
                 name: "Arr",
-                ty: Ty::IdentTemplate(("array", TypeExpression::new(Ty::Ident("i32")).into()))
-                    .into(),
+                ty: Ty::IdentTemplate((
+                    "array",
+                    ListExpression::new_comma([TypeExpression::new(Ty::Ident("i32"))].into_iter())
+                        .into()
+                ))
+                .into(),
             }
         );
 
@@ -1923,14 +2083,20 @@ pub mod tests {
                     },
                     StructMember {
                         ident: "b",
-                        ty: Ty::IdentTemplate(("vec2", TypeExpression::new(Ty::Ident("T")).into())),
+                        ty: Ty::IdentTemplate((
+                            "vec2",
+                            ListExpression::new_comma(
+                                [TypeExpression::new(Ty::Ident("T"))].into_iter()
+                            )
+                            .into()
+                        )),
                         attrs: vec!(),
                     },
                     StructMember {
                         ident: "c",
                         ty: Ty::IdentTemplate((
                             "array",
-                            ConcatExpression::new_concat(
+                            ListExpression::new_comma(
                                 [
                                     TypeExpression::new(Ty::Ident("i32")),
                                     TypeExpression::new(Ty::Literal((
@@ -2048,5 +2214,55 @@ pub mod tests {
         // );
 
         // assert_error!(literal("ccv"));
+    }
+
+    #[test]
+    fn decl_test() {
+        assert_ret!(
+            variable_or_value_statement("var<uniform> light_num = 4"),
+            DeclStatement {
+                decl_ty: "var",
+                template_list: Some(
+                    ListExpression::new_comma(
+                        [TypeExpression::new(Ty::Ident("uniform"))].into_iter()
+                    )
+                    .into()
+                ),
+                ident: OptionallyTypedIdent {
+                    name: "light_num",
+                    ty: None
+                },
+                assignment: Some(LiteralExpression::new(Integer::Abstract(4).into(), "4").into()),
+            }
+            .into()
+        );
+
+        assert_ret!(
+            variable_or_value_statement("var light_num: T"),
+            DeclStatement {
+                decl_ty: "var",
+                template_list: None,
+                ident: OptionallyTypedIdent {
+                    name: "light_num",
+                    ty: Some(Ty::Ident("T"))
+                },
+                assignment: None,
+            }
+            .into()
+        );
+
+        assert_ret!(
+            variable_or_value_statement("let light_num = 4"),
+            DeclStatement {
+                decl_ty: "let",
+                template_list: None,
+                ident: OptionallyTypedIdent {
+                    name: "light_num",
+                    ty: None
+                },
+                assignment: Some(LiteralExpression::new(Integer::Abstract(4).into(), "4").into()),
+            }
+            .into()
+        );
     }
 }

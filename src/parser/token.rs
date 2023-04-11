@@ -1,6 +1,7 @@
 use strum::*;
+use serde::Serialize;
 
-#[derive(Debug, PartialEq, Clone, Eq)]
+#[derive(Debug, PartialEq, Clone, Eq, Serialize)]
 pub enum Integer {
     I(i32),
     U(u32),
@@ -23,21 +24,21 @@ impl From<Float> for Literal {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize)]
 pub enum Float {
     F32(f32),
     F16(f32),
     Abstract(f64),
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize)]
 pub enum Literal {
     Bool(bool),
     Integer(Integer),
     Float(Float),
 }
 
-#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString, Eq, PartialEq, Hash, Serialize)]
 #[repr(u32)]
 #[strum(serialize_all = "snake_case", use_phf)]
 pub enum Keyword {
@@ -127,7 +128,7 @@ impl Keyword {
     }
 }
 
-#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString, Eq, PartialEq, Hash, Serialize)]
 #[repr(u32)]
 #[strum(serialize_all = "snake_case", use_phf)]
 pub enum ReservedWord {
@@ -304,7 +305,7 @@ pub enum ReservedWord {
     Yield,
 }
 
-#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString)]
+#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString, Serialize)]
 #[repr(u32)]
 #[strum(serialize_all = "snake_case", use_phf)]
 pub enum ContextName {
@@ -324,7 +325,7 @@ pub enum ContextName {
     WorkgroupSize,
 }
 
-#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString)]
+#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString, Serialize)]
 #[repr(u32)]
 #[strum(serialize_all = "snake_case", use_phf)]
 pub enum InterpolationType {
@@ -333,7 +334,7 @@ pub enum InterpolationType {
     Flat,
 }
 
-#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString)]
+#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString, Serialize)]
 #[repr(u32)]
 #[strum(serialize_all = "snake_case", use_phf)]
 pub enum InterpolationSampling {
@@ -342,7 +343,7 @@ pub enum InterpolationSampling {
     Sample,
 }
 
-#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString)]
+#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString, Serialize)]
 #[repr(u32)]
 #[strum(serialize_all = "snake_case", use_phf)]
 pub enum BuiltinValue {
@@ -360,7 +361,7 @@ pub enum BuiltinValue {
     SampleMask,
 }
 
-#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString)]
+#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString, Serialize)]
 #[repr(u32)]
 #[strum(serialize_all = "snake_case", use_phf)]
 pub enum AccessMode {
@@ -369,7 +370,7 @@ pub enum AccessMode {
     ReadWrite,
 }
 
-#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString)]
+#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString, Serialize)]
 #[repr(u32)]
 #[strum(serialize_all = "snake_case", use_phf)]
 pub enum AddressSpace {
@@ -380,7 +381,7 @@ pub enum AddressSpace {
     Storage,
 }
 
-#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString)]
+#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString, Serialize)]
 #[repr(u32)]
 #[strum(serialize_all = "snake_case", use_phf)]
 pub enum TexelFormat {
@@ -403,14 +404,14 @@ pub enum TexelFormat {
     Bgra8unorm,
 }
 
-#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString)]
+#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString, Serialize, PartialEq, Eq)]
 #[repr(u32)]
 #[strum(serialize_all = "snake_case", use_phf)]
 pub enum Extension {
     F16,
 }
 
-#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString, PartialEq, Eq, Serialize)]
 #[repr(u32)]
 #[strum(serialize_all = "snake_case", use_phf)]
 pub enum SynToken {
@@ -514,7 +515,7 @@ impl SynToken {
     }
 }
 
-#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Display, EnumIter, EnumString, PartialEq, Eq, Serialize)]
 #[repr(u32)]
 #[strum(serialize_all = "snake_case", use_phf)]
 pub enum AttributeType {
@@ -559,18 +560,4 @@ impl AttributeType {
             _ => return None,
         })
     }
-}
-
-pub enum TokenTy {
-    Literal(Literal),
-    Keyword(Keyword),
-    ReservedWord(ReservedWord),
-    SyntacticToken(SynToken),
-    Identifier,
-    ContextName(ContextName),
-}
-
-pub struct Token<'a> {
-    str: &'a str,
-    ty: TokenTy,
 }

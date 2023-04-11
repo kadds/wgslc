@@ -1,0 +1,1473 @@
+{
+  "global_enables": [],
+  "decls": [
+    {
+      "StructDecl": {
+        "name": "CameraUniform",
+        "members": [
+          {
+            "ident": "vp",
+            "ty": {
+              "IdentTemplate": [
+                "mat4x4",
+                {
+                  "List": [
+                    {
+                      "Type": {
+                        "ty": {
+                          "Ident": "f32"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "attrs": []
+          }
+        ]
+      }
+    },
+    {
+      "StructDecl": {
+        "name": "D2SizeCameraUniform",
+        "members": [
+          {
+            "ident": "view_size",
+            "ty": {
+              "IdentTemplate": [
+                "vec2",
+                {
+                  "List": [
+                    {
+                      "Type": {
+                        "ty": {
+                          "Ident": "f32"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "attrs": []
+          }
+        ]
+      }
+    },
+    {
+      "StructDecl": {
+        "name": "VertexInput",
+        "members": [
+          {
+            "ident": "position",
+            "ty": {
+              "IdentTemplate": [
+                "vec4",
+                {
+                  "List": [
+                    {
+                      "Type": {
+                        "ty": {
+                          "Ident": "f32"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "attrs": [
+              {
+                "ty": "Location",
+                "exprs": [
+                  {
+                    "Literal": {
+                      "literal": {
+                        "Integer": {
+                          "Abstract": 0
+                        }
+                      },
+                      "literal_str": "0"
+                    }
+                  }
+                ],
+                "diagnostic_control": null
+              }
+            ]
+          },
+          {
+            "ident": "color",
+            "ty": {
+              "IdentTemplate": [
+                "vec4",
+                {
+                  "List": [
+                    {
+                      "Type": {
+                        "ty": {
+                          "Ident": "f32"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "attrs": [
+              {
+                "ty": "Location",
+                "exprs": [
+                  {
+                    "Literal": {
+                      "literal": {
+                        "Integer": {
+                          "Abstract": 1
+                        }
+                      },
+                      "literal_str": "1"
+                    }
+                  }
+                ],
+                "diagnostic_control": null
+              }
+            ]
+          },
+          {
+            "ident": "uv",
+            "ty": {
+              "IdentTemplate": [
+                "vec2",
+                {
+                  "List": [
+                    {
+                      "Type": {
+                        "ty": {
+                          "Ident": "f32"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "attrs": [
+              {
+                "ty": "Location",
+                "exprs": [
+                  {
+                    "Literal": {
+                      "literal": {
+                        "Integer": {
+                          "Abstract": 2
+                        }
+                      },
+                      "literal_str": "2"
+                    }
+                  }
+                ],
+                "diagnostic_control": null
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "StructDecl": {
+        "name": "VertexOutput",
+        "members": [
+          {
+            "ident": "color",
+            "ty": {
+              "IdentTemplate": [
+                "vec4",
+                {
+                  "List": [
+                    {
+                      "Type": {
+                        "ty": {
+                          "Ident": "f32"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "attrs": [
+              {
+                "ty": "Location",
+                "exprs": [
+                  {
+                    "Literal": {
+                      "literal": {
+                        "Integer": {
+                          "Abstract": 0
+                        }
+                      },
+                      "literal_str": "0"
+                    }
+                  }
+                ],
+                "diagnostic_control": null
+              }
+            ]
+          },
+          {
+            "ident": "uv",
+            "ty": {
+              "IdentTemplate": [
+                "vec2",
+                {
+                  "List": [
+                    {
+                      "Type": {
+                        "ty": {
+                          "Ident": "f32"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "attrs": [
+              {
+                "ty": "Location",
+                "exprs": [
+                  {
+                    "Literal": {
+                      "literal": {
+                        "Integer": {
+                          "Abstract": 1
+                        }
+                      },
+                      "literal_str": "1"
+                    }
+                  }
+                ],
+                "diagnostic_control": null
+              }
+            ]
+          },
+          {
+            "ident": "position",
+            "ty": {
+              "IdentTemplate": [
+                "vec4",
+                {
+                  "List": [
+                    {
+                      "Type": {
+                        "ty": {
+                          "Ident": "f32"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "attrs": [
+              {
+                "ty": "Builtin",
+                "exprs": [
+                  {
+                    "Ident": {
+                      "name": "position",
+                      "template_post_ident": null
+                    }
+                  }
+                ],
+                "diagnostic_control": null
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "StructDecl": {
+        "name": "MaterialUniform",
+        "members": [
+          {
+            "ident": "color",
+            "ty": {
+              "IdentTemplate": [
+                "vec4",
+                {
+                  "List": [
+                    {
+                      "Type": {
+                        "ty": {
+                          "Ident": "f32"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "attrs": []
+          },
+          {
+            "ident": "alpha_test",
+            "ty": {
+              "Ident": "f32"
+            },
+            "attrs": []
+          }
+        ]
+      }
+    },
+    {
+      "StructDecl": {
+        "name": "Object",
+        "members": [
+          {
+            "ident": "model",
+            "ty": {
+              "IdentTemplate": [
+                "mat4x4",
+                {
+                  "List": [
+                    {
+                      "Type": {
+                        "ty": {
+                          "Ident": "f32"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "attrs": []
+          }
+        ]
+      }
+    },
+    {
+      "GlobalVariableDecl": {
+        "template_list": {
+          "List": [
+            {
+              "Type": {
+                "ty": {
+                  "Ident": "uniform"
+                }
+              }
+            }
+          ]
+        },
+        "ident": {
+          "name": "camera_uniform",
+          "ty": {
+            "Ident": "CameraUniform"
+          }
+        },
+        "equals": null,
+        "attrs": [
+          {
+            "ty": "Group",
+            "exprs": [
+              {
+                "Literal": {
+                  "literal": {
+                    "Integer": {
+                      "Abstract": 0
+                    }
+                  },
+                  "literal_str": "0"
+                }
+              }
+            ],
+            "diagnostic_control": null
+          },
+          {
+            "ty": "Binding",
+            "exprs": [
+              {
+                "Literal": {
+                  "literal": {
+                    "Integer": {
+                      "Abstract": 0
+                    }
+                  },
+                  "literal_str": "0"
+                }
+              }
+            ],
+            "diagnostic_control": null
+          }
+        ]
+      }
+    },
+    {
+      "GlobalVariableDecl": {
+        "template_list": {
+          "List": [
+            {
+              "Type": {
+                "ty": {
+                  "Ident": "uniform"
+                }
+              }
+            }
+          ]
+        },
+        "ident": {
+          "name": "material_uniform",
+          "ty": {
+            "Ident": "MaterialUniform"
+          }
+        },
+        "equals": null,
+        "attrs": [
+          {
+            "ty": "Group",
+            "exprs": [
+              {
+                "Literal": {
+                  "literal": {
+                    "Integer": {
+                      "Abstract": 1
+                    }
+                  },
+                  "literal_str": "1"
+                }
+              }
+            ],
+            "diagnostic_control": null
+          },
+          {
+            "ty": "Binding",
+            "exprs": [
+              {
+                "Literal": {
+                  "literal": {
+                    "Integer": {
+                      "Abstract": 0
+                    }
+                  },
+                  "literal_str": "0"
+                }
+              }
+            ],
+            "diagnostic_control": null
+          }
+        ]
+      }
+    },
+    {
+      "GlobalVariableDecl": {
+        "template_list": null,
+        "ident": {
+          "name": "texture_color",
+          "ty": {
+            "IdentTemplate": [
+              "texture_2d",
+              {
+                "List": [
+                  {
+                    "Type": {
+                      "ty": {
+                        "Ident": "f32"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "equals": null,
+        "attrs": [
+          {
+            "ty": "Group",
+            "exprs": [
+              {
+                "Literal": {
+                  "literal": {
+                    "Integer": {
+                      "Abstract": 1
+                    }
+                  },
+                  "literal_str": "1"
+                }
+              }
+            ],
+            "diagnostic_control": null
+          },
+          {
+            "ty": "Binding",
+            "exprs": [
+              {
+                "Literal": {
+                  "literal": {
+                    "Integer": {
+                      "Abstract": 1
+                    }
+                  },
+                  "literal_str": "1"
+                }
+              }
+            ],
+            "diagnostic_control": null
+          }
+        ]
+      }
+    },
+    {
+      "GlobalVariableDecl": {
+        "template_list": null,
+        "ident": {
+          "name": "sampler0",
+          "ty": {
+            "Ident": "sampler"
+          }
+        },
+        "equals": null,
+        "attrs": [
+          {
+            "ty": "Group",
+            "exprs": [
+              {
+                "Literal": {
+                  "literal": {
+                    "Integer": {
+                      "Abstract": 1
+                    }
+                  },
+                  "literal_str": "1"
+                }
+              }
+            ],
+            "diagnostic_control": null
+          },
+          {
+            "ty": "Binding",
+            "exprs": [
+              {
+                "Literal": {
+                  "literal": {
+                    "Integer": {
+                      "Abstract": 2
+                    }
+                  },
+                  "literal_str": "2"
+                }
+              }
+            ],
+            "diagnostic_control": null
+          }
+        ]
+      }
+    },
+    {
+      "GlobalVariableDecl": {
+        "template_list": {
+          "List": [
+            {
+              "Type": {
+                "ty": {
+                  "Ident": "push_constant"
+                }
+              }
+            }
+          ]
+        },
+        "ident": {
+          "name": "object",
+          "ty": {
+            "Ident": "Object"
+          }
+        },
+        "equals": null,
+        "attrs": []
+      }
+    },
+    {
+      "FunctionDecl": {
+        "name": "color_offset",
+        "inputs": [
+          {
+            "name": "va",
+            "ty": {
+              "Ident": "f32"
+            }
+          }
+        ],
+        "output": [
+          [],
+          {
+            "Ident": "f32"
+          }
+        ],
+        "block": {
+          "Compound": {
+            "stmts": {
+              "List": [
+                {
+                  "Decl": {
+                    "decl_ty": "var",
+                    "template_list": null,
+                    "ident": {
+                      "name": "val",
+                      "ty": null
+                    },
+                    "assignment": {
+                      "Ident": {
+                        "name": "va",
+                        "template_post_ident": null
+                      }
+                    }
+                  }
+                },
+                {
+                  "If": {
+                    "cond": {
+                      "Binary": {
+                        "left": {
+                          "Ident": {
+                            "name": "val",
+                            "template_post_ident": null
+                          }
+                        },
+                        "op": "GreaterThan",
+                        "right": {
+                          "Literal": {
+                            "literal": {
+                              "Float": {
+                                "Abstract": 0.8
+                              }
+                            },
+                            "literal_str": "0.8"
+                          }
+                        },
+                        "_pd": null
+                      }
+                    },
+                    "accept": {
+                      "Compound": {
+                        "stmts": {
+                          "List": [
+                            {
+                              "Assignment": {
+                                "lhs": {
+                                  "Ident": {
+                                    "name": "val",
+                                    "template_post_ident": null
+                                  }
+                                },
+                                "rhs": {
+                                  "Literal": {
+                                    "literal": {
+                                      "Float": {
+                                        "Abstract": 1.0
+                                      }
+                                    },
+                                    "literal_str": "1.0"
+                                  }
+                                },
+                                "op": "Equal",
+                                "_pd": null
+                              }
+                            }
+                          ]
+                        },
+                        "attrs": []
+                      }
+                    },
+                    "reject": {
+                      "ElIf": {
+                        "cond": {
+                          "Binary": {
+                            "left": {
+                              "Ident": {
+                                "name": "val",
+                                "template_post_ident": null
+                              }
+                            },
+                            "op": "GreaterThan",
+                            "right": {
+                              "Literal": {
+                                "literal": {
+                                  "Float": {
+                                    "Abstract": 0.6
+                                  }
+                                },
+                                "literal_str": "0.6"
+                              }
+                            },
+                            "_pd": null
+                          }
+                        },
+                        "accept": {
+                          "Compound": {
+                            "stmts": {
+                              "List": [
+                                {
+                                  "Assignment": {
+                                    "lhs": {
+                                      "Ident": {
+                                        "name": "val",
+                                        "template_post_ident": null
+                                      }
+                                    },
+                                    "rhs": {
+                                      "Literal": {
+                                        "literal": {
+                                          "Float": {
+                                            "Abstract": 0.8
+                                          }
+                                        },
+                                        "literal_str": "0.8"
+                                      }
+                                    },
+                                    "op": "Equal",
+                                    "_pd": null
+                                  }
+                                }
+                              ]
+                            },
+                            "attrs": []
+                          }
+                        },
+                        "reject": {
+                          "Else": {
+                            "accept": {
+                              "Compound": {
+                                "stmts": {
+                                  "List": []
+                                },
+                                "attrs": []
+                              }
+                            },
+                            "_pd": null
+                          }
+                        },
+                        "_pd": null
+                      }
+                    },
+                    "_pd": null
+                  }
+                },
+                {
+                  "Return": {
+                    "expr": {
+                      "Ident": {
+                        "name": "val",
+                        "template_post_ident": null
+                      }
+                    },
+                    "_pd": null
+                  }
+                }
+              ]
+            },
+            "attrs": []
+          }
+        },
+        "attrs": []
+      }
+    },
+    {
+      "FunctionDecl": {
+        "name": "vs_main",
+        "inputs": [
+          {
+            "name": "input",
+            "ty": {
+              "Ident": "VertexInput"
+            }
+          }
+        ],
+        "output": [
+          [],
+          {
+            "Ident": "VertexOutput"
+          }
+        ],
+        "block": {
+          "Compound": {
+            "stmts": {
+              "List": [
+                {
+                  "Decl": {
+                    "decl_ty": "var",
+                    "template_list": null,
+                    "ident": {
+                      "name": "output",
+                      "ty": {
+                        "Ident": "VertexOutput"
+                      }
+                    },
+                    "assignment": null
+                  }
+                },
+                {
+                  "Assignment": {
+                    "lhs": {
+                      "Postfix": {
+                        "ident": {
+                          "Ident": {
+                            "name": "output",
+                            "template_post_ident": null
+                          }
+                        },
+                        "postfix": {
+                          "Ident": "position"
+                        }
+                      }
+                    },
+                    "rhs": {
+                      "Binary": {
+                        "left": {
+                          "Binary": {
+                            "left": {
+                              "Postfix": {
+                                "ident": {
+                                  "Ident": {
+                                    "name": "camera_uniform",
+                                    "template_post_ident": null
+                                  }
+                                },
+                                "postfix": {
+                                  "Ident": "vp"
+                                }
+                              }
+                            },
+                            "op": "Star",
+                            "right": {
+                              "Postfix": {
+                                "ident": {
+                                  "Ident": {
+                                    "name": "object",
+                                    "template_post_ident": null
+                                  }
+                                },
+                                "postfix": {
+                                  "Ident": "model"
+                                }
+                              }
+                            },
+                            "_pd": null
+                          }
+                        },
+                        "op": "Star",
+                        "right": {
+                          "Postfix": {
+                            "ident": {
+                              "Ident": {
+                                "name": "input",
+                                "template_post_ident": null
+                              }
+                            },
+                            "postfix": {
+                              "Ident": "position"
+                            }
+                          }
+                        },
+                        "_pd": null
+                      }
+                    },
+                    "op": "Equal",
+                    "_pd": null
+                  }
+                },
+                {
+                  "Assignment": {
+                    "lhs": {
+                      "Postfix": {
+                        "ident": {
+                          "Ident": {
+                            "name": "output",
+                            "template_post_ident": null
+                          }
+                        },
+                        "postfix": {
+                          "Ident": "color"
+                        }
+                      }
+                    },
+                    "rhs": {
+                      "Postfix": {
+                        "ident": {
+                          "Ident": {
+                            "name": "material_uniform",
+                            "template_post_ident": null
+                          }
+                        },
+                        "postfix": {
+                          "Ident": "color"
+                        }
+                      }
+                    },
+                    "op": "Equal",
+                    "_pd": null
+                  }
+                },
+                {
+                  "Decl": {
+                    "decl_ty": "var",
+                    "template_list": null,
+                    "ident": {
+                      "name": "val",
+                      "ty": null
+                    },
+                    "assignment": {
+                      "Literal": {
+                        "literal": {
+                          "Float": {
+                            "Abstract": 0.9
+                          }
+                        },
+                        "literal_str": "0.9"
+                      }
+                    }
+                  }
+                },
+                {
+                  "Decl": {
+                    "decl_ty": "let",
+                    "template_list": null,
+                    "ident": {
+                      "name": "times",
+                      "ty": {
+                        "Ident": "i32"
+                      }
+                    },
+                    "assignment": {
+                      "Literal": {
+                        "literal": {
+                          "Integer": {
+                            "Abstract": 4
+                          }
+                        },
+                        "literal_str": "4"
+                      }
+                    }
+                  }
+                },
+                {
+                  "For": {
+                    "init": {
+                      "Decl": {
+                        "decl_ty": "var",
+                        "template_list": null,
+                        "ident": {
+                          "name": "i",
+                          "ty": {
+                            "Ident": "i32"
+                          }
+                        },
+                        "assignment": {
+                          "Literal": {
+                            "literal": {
+                              "Integer": {
+                                "Abstract": 0
+                              }
+                            },
+                            "literal_str": "0"
+                          }
+                        }
+                      }
+                    },
+                    "cond": {
+                      "Binary": {
+                        "left": {
+                          "Ident": {
+                            "name": "i",
+                            "template_post_ident": null
+                          }
+                        },
+                        "op": "LessThan",
+                        "right": {
+                          "Ident": {
+                            "name": "times",
+                            "template_post_ident": null
+                          }
+                        },
+                        "_pd": null
+                      }
+                    },
+                    "update": {
+                      "Assignment": {
+                        "lhs": {
+                          "Ident": {
+                            "name": "i",
+                            "template_post_ident": null
+                          }
+                        },
+                        "rhs": "Placeholder",
+                        "op": "PlusPlus",
+                        "_pd": null
+                      }
+                    },
+                    "body": {
+                      "Compound": {
+                        "stmts": {
+                          "List": [
+                            {
+                              "Assignment": {
+                                "lhs": {
+                                  "Ident": {
+                                    "name": "val",
+                                    "template_post_ident": null
+                                  }
+                                },
+                                "rhs": {
+                                  "Binary": {
+                                    "left": {
+                                      "Postfix": {
+                                        "ident": {
+                                          "Ident": {
+                                            "name": "input",
+                                            "template_post_ident": null
+                                          }
+                                        },
+                                        "postfix": {
+                                          "Ident": "color"
+                                        }
+                                      }
+                                    },
+                                    "op": "Star",
+                                    "right": {
+                                      "FunctionCall": {
+                                        "ident": {
+                                          "Ident": {
+                                            "name": "color_offset",
+                                            "template_post_ident": null
+                                          }
+                                        },
+                                        "args": {
+                                          "List": [
+                                            {
+                                              "Ident": {
+                                                "name": "val",
+                                                "template_post_ident": null
+                                              }
+                                            }
+                                          ]
+                                        },
+                                        "_pd": null
+                                      }
+                                    },
+                                    "_pd": null
+                                  }
+                                },
+                                "op": "TimesEqual",
+                                "_pd": null
+                              }
+                            }
+                          ]
+                        },
+                        "attrs": []
+                      }
+                    },
+                    "_pd": null
+                  }
+                },
+                {
+                  "Assignment": {
+                    "lhs": {
+                      "Postfix": {
+                        "ident": {
+                          "Ident": {
+                            "name": "output",
+                            "template_post_ident": null
+                          }
+                        },
+                        "postfix": {
+                          "Ident": "color"
+                        }
+                      }
+                    },
+                    "rhs": {
+                      "Postfix": {
+                        "ident": {
+                          "Ident": {
+                            "name": "input",
+                            "template_post_ident": null
+                          }
+                        },
+                        "postfix": {
+                          "Ident": "color"
+                        }
+                      }
+                    },
+                    "op": "TimesEqual",
+                    "_pd": null
+                  }
+                },
+                {
+                  "While": {
+                    "cond": {
+                      "Ident": {
+                        "name": "false",
+                        "template_post_ident": null
+                      }
+                    },
+                    "body": {
+                      "Compound": {
+                        "stmts": {
+                          "List": [
+                            {
+                              "Assignment": {
+                                "lhs": {
+                                  "Postfix": {
+                                    "ident": {
+                                      "Ident": {
+                                        "name": "output",
+                                        "template_post_ident": null
+                                      }
+                                    },
+                                    "postfix": {
+                                      "Ident": "color"
+                                    }
+                                  }
+                                },
+                                "rhs": {
+                                  "FunctionCall": {
+                                    "ident": {
+                                      "Ident": {
+                                        "name": "vec4",
+                                        "template_post_ident": null
+                                      }
+                                    },
+                                    "args": {
+                                      "List": [
+                                        {
+                                          "Literal": {
+                                            "literal": {
+                                              "Integer": {
+                                                "Abstract": 0
+                                              }
+                                            },
+                                            "literal_str": "0"
+                                          }
+                                        },
+                                        {
+                                          "Literal": {
+                                            "literal": {
+                                              "Integer": {
+                                                "Abstract": 0
+                                              }
+                                            },
+                                            "literal_str": "0"
+                                          }
+                                        },
+                                        {
+                                          "Literal": {
+                                            "literal": {
+                                              "Integer": {
+                                                "Abstract": 0
+                                              }
+                                            },
+                                            "literal_str": "0"
+                                          }
+                                        },
+                                        {
+                                          "Literal": {
+                                            "literal": {
+                                              "Integer": {
+                                                "Abstract": 0
+                                              }
+                                            },
+                                            "literal_str": "0"
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    "_pd": null
+                                  }
+                                },
+                                "op": "Equal",
+                                "_pd": null
+                              }
+                            }
+                          ]
+                        },
+                        "attrs": []
+                      }
+                    },
+                    "_pd": null
+                  }
+                },
+                {
+                  "Return": {
+                    "expr": {
+                      "Ident": {
+                        "name": "output",
+                        "template_post_ident": null
+                      }
+                    },
+                    "_pd": null
+                  }
+                }
+              ]
+            },
+            "attrs": []
+          }
+        },
+        "attrs": [
+          {
+            "ty": "Vertex",
+            "exprs": [],
+            "diagnostic_control": null
+          }
+        ]
+      }
+    },
+    {
+      "FunctionDecl": {
+        "name": "fs_main",
+        "inputs": [
+          {
+            "name": "input",
+            "ty": {
+              "Ident": "VertexOutput"
+            }
+          }
+        ],
+        "output": [
+          [
+            {
+              "ty": "Location",
+              "exprs": [
+                {
+                  "Literal": {
+                    "literal": {
+                      "Integer": {
+                        "Abstract": 0
+                      }
+                    },
+                    "literal_str": "0"
+                  }
+                }
+              ],
+              "diagnostic_control": null
+            }
+          ],
+          {
+            "IdentTemplate": [
+              "vec4",
+              {
+                "List": [
+                  {
+                    "Type": {
+                      "ty": {
+                        "Ident": "f32"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "block": {
+          "Compound": {
+            "stmts": {
+              "List": [
+                {
+                  "Decl": {
+                    "decl_ty": "var",
+                    "template_list": null,
+                    "ident": {
+                      "name": "color",
+                      "ty": null
+                    },
+                    "assignment": {
+                      "Postfix": {
+                        "ident": {
+                          "Ident": {
+                            "name": "input",
+                            "template_post_ident": null
+                          }
+                        },
+                        "postfix": {
+                          "Ident": "color"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "Assignment": {
+                    "lhs": {
+                      "Ident": {
+                        "name": "color",
+                        "template_post_ident": null
+                      }
+                    },
+                    "rhs": {
+                      "FunctionCall": {
+                        "ident": {
+                          "Ident": {
+                            "name": "textureSample",
+                            "template_post_ident": null
+                          }
+                        },
+                        "args": {
+                          "List": [
+                            {
+                              "Ident": {
+                                "name": "texture_color",
+                                "template_post_ident": null
+                              }
+                            },
+                            {
+                              "Ident": {
+                                "name": "sampler0",
+                                "template_post_ident": null
+                              }
+                            },
+                            {
+                              "Postfix": {
+                                "ident": {
+                                  "Ident": {
+                                    "name": "input",
+                                    "template_post_ident": null
+                                  }
+                                },
+                                "postfix": {
+                                  "Ident": "uv"
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        "_pd": null
+                      }
+                    },
+                    "op": "TimesEqual",
+                    "_pd": null
+                  }
+                },
+                {
+                  "Loop": {
+                    "attrs": [],
+                    "body": {
+                      "List": [
+                        {
+                          "Assignment": {
+                            "lhs": {
+                              "Postfix": {
+                                "ident": {
+                                  "Ident": {
+                                    "name": "color",
+                                    "template_post_ident": null
+                                  }
+                                },
+                                "postfix": {
+                                  "Ident": "a"
+                                }
+                              }
+                            },
+                            "rhs": {
+                              "Literal": {
+                                "literal": {
+                                  "Float": {
+                                    "Abstract": 0.1
+                                  }
+                                },
+                                "literal_str": "0.1"
+                              }
+                            },
+                            "op": "MinusEqual",
+                            "_pd": null
+                          }
+                        },
+                        {
+                          "Break": {
+                            "_pd": null
+                          }
+                        }
+                      ]
+                    },
+                    "continuing": null,
+                    "_pd": null
+                  }
+                },
+                {
+                  "If": {
+                    "cond": {
+                      "Binary": {
+                        "left": {
+                          "Postfix": {
+                            "ident": {
+                              "Ident": {
+                                "name": "color",
+                                "template_post_ident": null
+                              }
+                            },
+                            "postfix": {
+                              "Ident": "a"
+                            }
+                          }
+                        },
+                        "op": "LessThan",
+                        "right": {
+                          "Postfix": {
+                            "ident": {
+                              "Ident": {
+                                "name": "material_uniform",
+                                "template_post_ident": null
+                              }
+                            },
+                            "postfix": {
+                              "Ident": "alpha_test"
+                            }
+                          }
+                        },
+                        "_pd": null
+                      }
+                    },
+                    "accept": {
+                      "Compound": {
+                        "stmts": {
+                          "List": [
+                            {
+                              "Discard": {
+                                "_pd": null
+                              }
+                            }
+                          ]
+                        },
+                        "attrs": []
+                      }
+                    },
+                    "reject": null,
+                    "_pd": null
+                  }
+                },
+                {
+                  "Return": {
+                    "expr": {
+                      "Ident": {
+                        "name": "color",
+                        "template_post_ident": null
+                      }
+                    },
+                    "_pd": null
+                  }
+                }
+              ]
+            },
+            "attrs": []
+          }
+        },
+        "attrs": [
+          {
+            "ty": "Fragment",
+            "exprs": [],
+            "diagnostic_control": null
+          }
+        ]
+      }
+    }
+  ]
+}

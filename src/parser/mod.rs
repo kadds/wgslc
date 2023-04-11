@@ -16,7 +16,7 @@ mod lex;
 mod number;
 mod token;
 
-pub fn incomplete_or_else<F, G, Input, Output, Error: nom::error::ParseError<Input>>(
+fn incomplete_or_else<F, G, Input, Output, Error: nom::error::ParseError<Input>>(
     mut child: G,
     or_fn: F,
 ) -> impl FnMut(Input) -> IResult<Input, Output, Error>
@@ -34,7 +34,7 @@ where
     }
 }
 
-pub fn one_of_or_else<F, Input, T, Error: nom::error::ParseError<Input>>(
+fn one_of_or_else<F, Input, T, Error: nom::error::ParseError<Input>>(
     list: T,
     or_fn: F,
 ) -> impl Fn(Input) -> IResult<Input, char, Error>
@@ -51,7 +51,7 @@ where
     }
 }
 
-pub fn separated_list1_ext_sep<I, O, O2, E, F, G>(
+fn separated_list1_ext_sep<I, O, O2, E, F, G>(
     mut sep: G,
     mut f: F,
 ) -> impl FnMut(I) -> IResult<I, Vec<O>, E>
@@ -101,7 +101,7 @@ where
     }
 }
 
-pub fn separated_list0_ext_sep<I, O, O2, E, F, G>(
+fn separated_list0_ext_sep<I, O, O2, E, F, G>(
     mut sep: G,
     mut f: F,
 ) -> impl FnMut(I) -> IResult<I, Vec<O>, E>
@@ -151,7 +151,7 @@ where
     }
 }
 
-pub fn dbg<F, I, O, E>(mut f: F, context: &'static str) -> impl FnMut(I) -> IResult<I, O, E>
+fn dbg<F, I, O, E>(mut f: F, context: &'static str) -> impl FnMut(I) -> IResult<I, O, E>
 where
     F: FnMut(I) -> IResult<I, O, E>,
     I: Debug + Clone,
@@ -184,6 +184,9 @@ pub enum ErrorKind {
     #[error("line break")]
     ExpectLineBreak,
 
+    #[error("expect char {0}")]
+    ExpectChar(char),
+
     #[error("expect keyword")]
     ExpectKeyword,
     #[error("expect attribute")]
@@ -194,6 +197,9 @@ pub enum ErrorKind {
 
     #[error("eof")]
     Eof,
+
+    #[error("end statement")]
+    EndStatement,
 }
 
 pub(crate) struct ErrContext<'a> {
@@ -279,8 +285,14 @@ where
         other
     }
 
-    fn or(self, other: Self) -> Self {
-        if other.context.len() < self.context.len() {
+    fn or(mut self, other: Self) -> Self {
+        // self.context.push(ErrContext {
+        //     msg: "".to_string(),
+        //     input: "",
+        // });
+        // self.context.extend(other.context.into_iter());
+        // self
+        if other.context.len() <= self.context.len() {
             self
         } else {
             other
@@ -354,17 +366,17 @@ impl Parser {
         let mut ret = ast::ParseResult::default();
         // try global directive first
         let (input, output) = global_directives(input).map_err(|e| {
-            ret.finish();
+            // ret.finish();
             self.map_ret(input, e)
         })?;
         ret.global_enables = output;
 
         let (input, output) = global_decls(input).map_err(|e| {
-            ret.finish();
+            // ret.finish();
             self.map_ret(input, e)
         })?;
         ret.decls = output;
-        ret.finish();
+        // ret.finish();
 
         // try global decl
         Ok(ret)

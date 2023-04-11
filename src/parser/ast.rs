@@ -1,12 +1,13 @@
 use super::token::AttributeType;
+use serde::ser::{SerializeSeq, SerializeStruct};
+use serde::{Serialize, Deserialize};
 use super::token::Literal;
 use super::token::SynToken;
 use enums_arena::EnumsIdArena;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use superslice::Ext;
+use std::ops::Range;
 
 pub trait Visitor<T> {
     fn visit(&self, t: &T) -> bool;
@@ -44,6 +45,13 @@ impl Debug for ExprId {
 impl<'a> PartialEq for ExprId {
     fn eq(&self, other: &Self) -> bool {
         get_expr(self.clone()) == get_expr(other.clone())
+    }
+}
+impl Serialize for ExprId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer {
+        get_expr(self.clone()).serialize(serializer)
     }
 }
 
@@ -94,7 +102,7 @@ macro_rules! use_expr_fn {
     };
 }
 
-#[derive(EnumsIdArena, Debug, PartialEq, Eq, Clone)]
+#[derive(EnumsIdArena, Debug, PartialEq, Eq, Clone, Serialize)]
 pub enum Expression<'a> {
     Unary(UnaryExpression<'a>),
     Binary(BinaryExpression<'a>),
@@ -103,7 +111,6 @@ pub enum Expression<'a> {
     Ident(IdentExpression<'a>),
     Literal(LiteralExpression<'a>),
     Type(TypeExpression<'a>),
-    Concat(ConcatExpression<'a>),
     List(ListExpression<'a>),
     Paren(ParenExpression<'a>),
     Placeholder,
@@ -114,7 +121,7 @@ impl<'a> Expr<'a> for Expression<'a> {
         self
     }
 }
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct UnaryExpression<'a> {
     pub op: SynToken,
     pub left: ExprId,
@@ -133,7 +140,7 @@ impl<'a> UnaryExpression<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct BinaryExpression<'a> {
     pub left: ExprId,
     pub op: SynToken,
@@ -154,10 +161,10 @@ impl<'a> BinaryExpression<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct FunctionCallExpression<'a> {
     pub ident: ExprId,        // ident
-    pub args: Option<ExprId>, // list of expr
+    pub args: Option<ExprId>, // list expr
     pub _pd: PhantomData<&'a ()>,
 }
 
@@ -165,16 +172,12 @@ use_expr_fn!(FunctionCall, FunctionCallExpression);
 
 impl<'a> FunctionCallExpression<'a> {
     pub fn new<E: Into<ExprId>>(ident: E, args: impl DoubleEndedIterator<Item = ExprId>) -> Self {
-        let concat_exprs = args.map(|v| ConcatExpression::new_end(v));
-        let mut prev: Option<ExprId> = None;
-        for mut e in concat_exprs.rev() {
-            e.right = prev;
-            prev = Some(e.into());
-        }
+        // let concat_exprs = args.map(|v| ConcatExpression::new_end(v));
+        let args = ListExpression::new_comma(args);
 
         Self {
             ident: ident.into(),
-            args: prev,
+            args: Some(args.into()),
             _pd: PhantomData::default(),
         }
     }
@@ -183,13 +186,13 @@ impl<'a> FunctionCallExpression<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub enum MemberOrExpr<'a> {
     Ident(&'a str),
     Index(ExprId),
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct PostfixExpression<'a> {
     pub ident: ExprId,
     pub postfix: MemberOrExpr<'a>,
@@ -212,7 +215,7 @@ impl<'a> PostfixExpression<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct IdentExpression<'a> {
     pub name: &'a str,
     pub template_post_ident: Option<ExprId>, // list of type <,>
@@ -235,7 +238,7 @@ impl<'a> IdentExpression<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct LiteralExpression<'a> {
     pub literal: Literal,
     pub literal_str: &'a str,
@@ -260,7 +263,7 @@ impl<'a> LiteralExpression<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct TypeExpression<'a> {
     ty: Ty<'a>,
 }
@@ -273,104 +276,85 @@ impl<'a> TypeExpression<'a> {
 
 use_expr_fn!(Type, TypeExpression);
 
-#[derive(PartialEq, Eq, Clone)]
-pub struct ConcatExpression<'a> {
-    pub cur: ExprId,
-    pub right: Option<ExprId>,
-    pub _pd: PhantomData<&'a ()>,
-}
-
-impl<'a> Debug for ConcatExpression<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.right {
-            Some(mut cur) => {
-                let mut list = f.debug_list();
-                list.entry(&self.cur);
-                loop {
-                    let n = get_expr(cur);
-                    if let Expression::Concat(e) = n {
-                        list.entry(&e.cur);
-                        if let Some(v) = e.right {
-                            cur = v;
-                            continue;
-                        }
-                    } else {
-                        list.entry(&n);
-                    }
-                    break;
-                }
-                list.finish()
-            }
-            _ => self.cur.fmt(f),
-        }
-    }
-}
-
-use_expr_fn!(Concat, ConcatExpression);
-
-impl<'a> ConcatExpression<'a> {
-    pub fn new<E: Into<ExprId>, F: Into<ExprId>>(cur: E, right: F) -> Self {
-        Self {
-            cur: cur.into(),
-            right: Some(right.into()),
-            _pd: PhantomData::default(),
-        }
-    }
-    pub fn new_end<E: Into<ExprId>>(cur: E) -> Self {
-        Self {
-            cur: cur.into(),
-            right: None,
-            _pd: PhantomData::default(),
-        }
-    }
-    pub fn new_concat<E: Into<ExprId>>(mut list: impl Iterator<Item = E>) -> ExprId {
-        let first = list.next().unwrap();
-        if let Some(second_item) = list.next() {
-            // second
-            let p2: ExprId = Self::new_end(second_item).into();
-            let p: ExprId = Self::new(first, p2).into();
-            let mut c = p2;
-            for item in list {
-                let n: ExprId = Self::new_end(item).into();
-                update_expr_for(c, |e: &mut ConcatExpression| {
-                    e.right = Some(n);
-                });
-                c = n;
-            }
-            return p;
-        } else {
-            return first.into();
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Eq, Clone)]
 pub struct ListExpression<'a> {
-    pub inner: ExprId,
-    pub sep: SynToken,
+    pub range: Range<u32>,
+    pub sep: Option<SynToken>,
     pub _pd: PhantomData<&'a ()>,
+}
+
+impl<'a> PartialEq for ListExpression<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        if self.range.clone().len() == other.range.clone().len() {
+            for (lhs, rhs) in get_range_of_exprs(self.range.clone())
+                .iter()
+                .zip(get_range_of_exprs(other.range.clone()))
+            {
+                if !(*lhs).eq(rhs) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        false
+    }
+}
+
+impl<'a> Debug for ListExpression<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let ret = get_range_of_exprs(self.range.clone());
+        let ret: Vec<ExprId> = ret.iter().map(|v| v.clone()).collect();
+
+        f.debug_struct("ListExpression")
+            .field("list", &ret)
+            .field("sep", &self.sep)
+            .finish()
+    }
+}
+
+impl<'a> Serialize for ListExpression<'a> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer {
+        let ret = get_range_of_exprs(self.range.clone());
+        let ret: Vec<ExprId> = ret.iter().map(|v| v.clone()).collect();
+        let mut u = serializer.serialize_seq(None)?;
+        for a in ret {
+            u.serialize_element(&a)?;
+        }
+        u.end()
+    }
 }
 
 use_expr_fn!(List, ListExpression);
 
 impl<'a> ListExpression<'a> {
-    pub fn new_comma<E: Into<ExprId>>(inner: E) -> Self {
+    pub fn new_comma<E: Into<ExprId>>(list: impl Iterator<Item = E>) -> Self {
+        let iter = list.map(|v| v.into());
         Self {
-            inner: inner.into(),
-            sep: SynToken::Comma,
+            range: alloc_range_of_exprs(iter),
+            sep: Some(SynToken::Comma),
             _pd: PhantomData::default(),
         }
     }
-    pub fn new<E: Into<ExprId>>(inner: E, sep: SynToken) -> Self {
+
+    pub fn new_none(list: impl Iterator<Item = ExprId>) -> Self {
         Self {
-            inner: inner.into(),
-            sep,
+            range: alloc_range_of_exprs(list),
+            sep: None,
+            _pd: PhantomData::default(),
+        }
+    }
+    pub fn new(range: Range<u32>, sep: SynToken) -> Self {
+        Self {
+            range,
+            sep: Some(sep),
             _pd: PhantomData::default(),
         }
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct ParenExpression<'a> {
     pub inner: Option<ExprId>,
     pub l: SynToken,
@@ -432,13 +416,13 @@ impl<'a> ParenExpression<'a> {
 
 // expr end
 
-#[derive(Debug, PartialEq, Eq, Default)]
+#[derive(Debug, PartialEq, Eq, Default, Clone, Serialize)]
 pub struct OptionallyTypedIdent<'a> {
     pub name: &'a str,
     pub ty: Option<Ty<'a>>,
 }
 
-#[derive(Debug, PartialEq, Eq, Default)]
+#[derive(Debug, PartialEq, Eq, Default, Serialize)]
 pub struct GlobalVariableDecl<'a> {
     pub template_list: Option<ExprId>, // list of type
     pub ident: OptionallyTypedIdent<'a>,
@@ -446,34 +430,27 @@ pub struct GlobalVariableDecl<'a> {
     pub attrs: Vec<Attribute<'a>>,
 }
 
-#[derive(Debug, PartialEq, Eq, Default)]
+#[derive(Debug, PartialEq, Eq, Default, Serialize)]
 pub struct GlobalOverrideValueDecl<'a> {
     pub ident: OptionallyTypedIdent<'a>,
     pub equals: Option<ExprId>,
     pub attrs: Vec<Attribute<'a>>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct GlobalConstValueDecl<'a> {
     pub ident: OptionallyTypedIdent<'a>,
     pub equals: ExprId,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub enum GlobalValueDecl<'a> {
     GlobalOverrideValueDecl(GlobalOverrideValueDecl<'a>),
     GlobalConstValueDecl(GlobalConstValueDecl<'a>),
 }
 
-// impl<'a> Node<'a> for ConstAssertStatement<'a> {
-//     fn visit(&self, f: impl Fn(&Self) -> bool) -> bool {
-//         let finish = f(self);
-//         finish
-//     }
-// }
-
-pub trait Statm<'a>: Clone {
-    fn enum_statm(self) -> Statement<'a>;
+pub trait Stmt<'a>: Clone {
+    fn enum_stmt(self) -> Statement<'a>;
     fn extract<'b>(_: &'b Statement<'a>) -> Option<&'b Self>
     where
         Self: Sized,
@@ -481,10 +458,10 @@ pub trait Statm<'a>: Clone {
         None
     }
 }
-macro_rules! use_statm_fn {
+macro_rules! use_stmt_fn {
     ($t: tt, $tt: tt) => {
-        impl<'a> Statm<'a> for $tt<'a> {
-            fn enum_statm(self) -> Statement<'a> {
+        impl<'a> Stmt<'a> for $tt<'a> {
+            fn enum_stmt(self) -> Statement<'a> {
                 Statement::$t(self)
             }
             fn extract<'b>(e: &'b Statement<'a>) -> Option<&'b Self>
@@ -500,48 +477,61 @@ macro_rules! use_statm_fn {
     };
 }
 
-#[derive(Debug, EnumsIdArena, PartialEq, Eq)]
+#[derive(Debug, EnumsIdArena, PartialEq, Eq, Serialize)]
 #[repr(u8)]
 pub enum Statement<'a> {
     If(IfStatement<'a>),
+    ElIf(ElIfStatement<'a>),
+    Else(ElseStatement<'a>),
     Compound(CompoundStatement<'a>),
     Assignment(AssignmentStatement<'a>),
+    Decl(DeclStatement<'a>),
     Switch(SwitchStatement<'a>),
+    Case(CaseStatement<'a>),
     Loop(LoopStatement<'a>),
     For(ForStatement<'a>),
     While(WhileStatement<'a>),
     Break(BreakStatement<'a>),
     Continue(ContinueStatement<'a>),
+    Continuing(ContinuingStatement<'a>),
     Return(ReturnStatement<'a>),
     FunctionCall(FunctionCallStatement<'a>),
     ConstAssert(ConstAssertStatement<'a>),
     Discard(DiscardStatement<'a>),
-    // Concat(ConcatStatement<'a>),
+    List(ListStatement<'a>),
     Placeholder,
 }
 
 #[derive(Clone, Eq, Copy)]
-pub struct StatmId(StatementId<u32, ()>);
+pub struct StmtId(StatementId<u32, ()>);
 
-impl From<StatementId<u32, ()>> for StatmId {
+impl From<StatementId<u32, ()>> for StmtId {
     fn from(value: StatementId<u32, ()>) -> Self {
         Self(value)
     }
 }
 
-impl Into<StatementId<u32, ()>> for StatmId {
+impl Into<StatementId<u32, ()>> for StmtId {
     fn into(self) -> StatementId<u32, ()> {
         self.0
     }
 }
 
-impl Debug for StatmId {
+impl Debug for StmtId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         get_statement(self.clone()).fmt(f)
     }
 }
 
-impl<'a> PartialEq for StatmId {
+impl Serialize for StmtId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer {
+        get_statement(self.clone()).serialize(serializer)
+    }
+}
+
+impl<'a> PartialEq for StmtId {
     fn eq(&self, other: &Self) -> bool {
         get_statement(self.clone()) == get_statement(other.clone())
     }
@@ -560,7 +550,7 @@ macro_rules! use_expr_new_for_statement {
     };
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct AssignmentStatement<'a> {
     pub lhs: ExprId,
     pub rhs: ExprId,
@@ -568,7 +558,7 @@ pub struct AssignmentStatement<'a> {
     pub _pd: PhantomData<&'a ()>,
 }
 
-use_statm_fn!(Assignment, AssignmentStatement);
+use_stmt_fn!(Assignment, AssignmentStatement);
 
 impl<'a> AssignmentStatement<'a> {
     pub fn new<E: Into<ExprId>, F: Into<ExprId>>(lhs: E, rhs: F) -> Self {
@@ -589,7 +579,7 @@ impl<'a> AssignmentStatement<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct IncrementStatement<'a> {
     pub lhs: ExprId,
     pub op: SynToken,
@@ -606,107 +596,219 @@ impl<'a> IncrementStatement<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct CompoundStatement<'a> {
-    pub stmts: Vec<StatmId>,
+    pub stmts: StmtId, // list
     pub attrs: Vec<Attribute<'a>>,
 }
-use_statm_fn!(Compound, CompoundStatement);
+use_stmt_fn!(Compound, CompoundStatement);
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
+pub struct DeclStatement<'a> {
+    pub decl_ty: &'a str,
+    pub template_list: Option<ExprId>,
+    pub ident: OptionallyTypedIdent<'a>,
+    pub assignment: Option<ExprId>,
+}
+
+use_stmt_fn!(Decl, DeclStatement);
+
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct IfStatement<'a> {
     pub cond: ExprId,
-    pub accept: CompoundStatement<'a>,
-    pub reject: CompoundStatement<'a>,
+    pub accept: StmtId,
+    pub reject: Option<StmtId>,
+    pub _pd: PhantomData<&'a ()>,
 }
+use_stmt_fn!(If, IfStatement);
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
+pub struct ElIfStatement<'a> {
+    pub cond: ExprId,
+    pub accept: StmtId,
+    pub reject: Option<StmtId>,
+    pub _pd: PhantomData<&'a ()>,
+}
+use_stmt_fn!(ElIf, ElIfStatement);
+
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
+pub struct ElseStatement<'a> {
+    pub accept: StmtId,
+    pub _pd: PhantomData<&'a ()>,
+}
+use_stmt_fn!(Else, ElseStatement);
+
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct SwitchStatement<'a> {
     pub selector: ExprId,
+    pub attrs: Vec<Attribute<'a>>,
+    pub cases: StmtId, // list of CaseStatement
     pub _pd: PhantomData<&'a ()>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+use_stmt_fn!(Switch, SwitchStatement);
+
+
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
+pub struct CaseStatement<'a> {
+    pub selector: Option<ExprId>,
+    pub body: StmtId,
+    pub _pd: PhantomData<&'a ()>,
+}
+
+use_stmt_fn!(Case, CaseStatement);
+
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct LoopStatement<'a> {
+    pub attrs: Vec<Attribute<'a>>,
+    pub body: StmtId, // list statement
+    pub continuing: Option<StmtId>,
     pub _pd: PhantomData<&'a ()>,
 }
+use_stmt_fn!(Loop, LoopStatement);
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct ForStatement<'a> {
-    pub init: StatmId,
-    pub cond: StatmId,
-    pub update: StatmId,
-    pub body: StatmId, // block statement
+    pub init: Option<StmtId>,
+    pub cond: Option<ExprId>,
+    pub update: Option<StmtId>,
+    pub body: StmtId, // block statement
     pub _pd: PhantomData<&'a ()>,
 }
+use_stmt_fn!(For, ForStatement);
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct WhileStatement<'a> {
-    pub cond: StatmId,
-    pub body: StatmId, // block statement
+    pub cond: ExprId,
+    pub body: StmtId, // block statement
     pub _pd: PhantomData<&'a ()>,
 }
+use_stmt_fn!(While, WhileStatement);
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Default, Serialize)]
 pub struct BreakStatement<'a> {
     pub _pd: PhantomData<&'a ()>,
 }
+use_stmt_fn!(Break, BreakStatement);
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct BreakIfStatement<'a> {
     pub cond: ExprId,
     pub _pd: PhantomData<&'a ()>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Default, Serialize)]
 pub struct ContinueStatement<'a> {
     pub _pd: PhantomData<&'a ()>,
 }
+use_stmt_fn!(Continue, ContinueStatement);
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct ContinuingStatement<'a> {
-    pub cond: StatmId, // block
+    pub attrs: Vec<Attribute<'a>>,
+    pub body: StmtId, // list statement
+    pub break_if: Option<ExprId>,
     pub _pd: PhantomData<&'a ()>,
 }
+use_stmt_fn!(Continuing, ContinuingStatement);
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct ReturnStatement<'a> {
     pub expr: ExprId,
     pub _pd: PhantomData<&'a ()>,
 }
+use_stmt_fn!(Return, ReturnStatement);
 use_expr_new_for_statement!(ReturnStatement);
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct FunctionCallStatement<'a> {
     pub expr: ExprId,
     pub _pd: PhantomData<&'a ()>,
 }
+use_stmt_fn!(FunctionCall, FunctionCallStatement);
 
 use_expr_new_for_statement!(FunctionCallStatement);
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct ConstAssertStatement<'a> {
     pub expr: ExprId,
     pub _pd: PhantomData<&'a ()>,
 }
-use_statm_fn!(ConstAssert, ConstAssertStatement);
+use_stmt_fn!(ConstAssert, ConstAssertStatement);
 use_expr_new_for_statement!(ConstAssertStatement);
 
-#[derive(Debug, PartialEq, Eq, Clone, Default)]
+#[derive(Debug, PartialEq, Eq, Clone, Default, Serialize)]
 pub struct DiscardStatement<'a> {
     pub _pd: PhantomData<&'a ()>,
+}
+use_stmt_fn!(Discard, DiscardStatement);
+
+#[derive(Eq, Clone)]
+pub struct ListStatement<'a> {
+    pub range: Range<u32>,
+    pub _pd: PhantomData<&'a ()>,
+}
+use_stmt_fn!(List, ListStatement);
+impl<'a> ListStatement<'a> {
+    pub fn new<S: Into<StmtId>>(list: impl Iterator<Item = S>) -> Self {
+        let iter = list.map(|v| v.into());
+        Self {
+            range: alloc_range_of_stmts(iter),
+            _pd: PhantomData::default(),
+        }
+    }
+}
+
+impl<'a> PartialEq for ListStatement<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        if self.range.clone().len() == other.range.clone().len() {
+            for (lhs, rhs) in get_range_of_stmts(self.range.clone())
+                .iter()
+                .zip(get_range_of_stmts(other.range.clone()))
+            {
+                if !(*lhs).eq(rhs) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        false
+    }
+}
+
+impl<'a> Debug for ListStatement<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let ret = get_range_of_stmts(self.range.clone());
+        let ret: Vec<StmtId> = ret.iter().map(|v| v.clone()).collect();
+
+        f.debug_struct("ListStatement").field("list", &ret).finish()
+    }
+}
+
+impl<'a> Serialize for ListStatement<'a> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer {
+        let ret = get_range_of_stmts(self.range.clone());
+        let ret: Vec<StmtId> = ret.iter().map(|v| v.clone()).collect();
+        let mut u = serializer.serialize_seq(None)?;
+        for val in ret {
+            u.serialize_element(&val)?;
+        }
+        u.end()
+    }
 }
 
 // ---------
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct Attribute<'a> {
     pub ty: AttributeType,
     pub exprs: Vec<ExprId>,
     pub diagnostic_control: Option<DiagnosticControl<'a>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 #[repr(u8)]
 pub enum Ty<'a> {
     Ident(&'a str),
@@ -733,52 +835,72 @@ impl<'a> Default for Ty<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
 pub struct DiagnosticControl<'a> {
     pub name: &'a str,
     pub ident: &'a str,
 }
 
-#[derive(Debug, PartialEq, Eq, Default)]
+#[derive(Debug, PartialEq, Eq, Default, Serialize)]
 pub struct StructMember<'a> {
     pub ident: &'a str,
     pub ty: Ty<'a>,
     pub attrs: Vec<Attribute<'a>>,
 }
 
-#[derive(Debug, PartialEq, Eq, Default)]
+#[derive(Debug, PartialEq, Eq, Default, Serialize)]
 pub struct StructDecl<'a> {
     pub name: &'a str,
     pub members: Vec<StructMember<'a>>,
 }
 
-#[derive(Debug, PartialEq, Eq, Default)]
+#[derive(Debug, PartialEq, Eq, Default, Serialize)]
 pub struct Param<'a> {
     pub name: &'a str,
     pub ty: Ty<'a>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct FunctionDecl<'a> {
     pub name: &'a str,
     pub inputs: Vec<Param<'a>>,
     pub output: Option<(Vec<Attribute<'a>>, Ty<'a>)>,
-    pub block: StatmId,
+    pub block: StmtId,
     pub attrs: Vec<Attribute<'a>>,
 }
 
-#[derive(Debug, PartialEq, Eq, Default)]
+#[derive(Debug, PartialEq, Eq, Default, Serialize)]
 pub struct TypeAliasDecl<'a> {
     pub name: &'a str,
     pub ty: Ty<'a>,
 }
 
 #[derive(Default)]
+
 pub struct ParseResult<'a> {
     pub global_enables: Vec<&'a str>,
     pub decls: Vec<GlobalDecl<'a>>,
     ctx: ParseContext<'a>,
-    // pub line_breaks: Vec<&'a str>,
+}
+
+impl<'a> Debug for ParseResult<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ParseResult")
+            .field("global_enables", &self.global_enables)
+            .field("decls", &self.decls)
+            .finish()
+    }
+}
+
+impl<'a> Serialize for ParseResult<'a> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer {
+        let mut u = serializer.serialize_struct("global_enables", 2)?;
+        u.serialize_field("global_enables", &self.global_enables);
+        u.serialize_field("decls", &self.decls);
+        u.end()
+    }
 }
 
 impl<'a> ParseResult<'a> {
@@ -787,17 +909,6 @@ impl<'a> ParseResult<'a> {
             self.ctx = unsafe { std::mem::transmute(ctx.replace(ParseContext::default())) };
         })
     }
-    // pub(crate) fn fill_line_breaks(&mut self, b: Vec<&'a str>) {
-    //     self.line_breaks = b;
-    // }
-    // pub(crate) fn line_column(&self, str: &str) -> Option<Span> {
-    //     if self.line_breaks.is_empty() {
-    //         return None;
-    //     }
-    //     let b = self.line_breaks.lower_bound_by(|v| v.as_ptr().cmp(&str.as_ptr()));
-    //     if b < self.line_breaks.len() {
-    //     }
-    // }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -818,8 +929,11 @@ impl Debug for Span {
 pub(crate) struct ParseContext<'a> {
     arena: ExpressionIdArena<'a, u32, ()>,
     statement_arena: StatementIdArena<'a, u32, ()>,
+    expr_vecs: Vec<ExprId>,
+    statement_vecs: Vec<StmtId>,
+
     pub placeholder: ExprId,
-    pub statement_placeholder: StatmId,
+    pub statement_placeholder: StmtId,
     pub opt_level: u32,
 }
 
@@ -832,6 +946,8 @@ impl<'a> Default for ParseContext<'a> {
         Self {
             arena,
             placeholder,
+            expr_vecs: vec![],
+            statement_vecs: vec![],
             opt_level: 0,
             statement_arena,
             statement_placeholder,
@@ -839,13 +955,14 @@ impl<'a> Default for ParseContext<'a> {
     }
 }
 
+#[derive(Debug, Serialize)]
 pub enum GlobalDecl<'a> {
     GlobalVariableDecl(GlobalVariableDecl<'a>),
     GlobalValueDecl(GlobalValueDecl<'a>),
     TypeAliasDecl(TypeAliasDecl<'a>),
     StructDecl(StructDecl<'a>),
     FunctionDecl(FunctionDecl<'a>),
-    GlobalConstAssertStatement(StatmId),
+    GlobalConstAssertStatement(StmtId),
     None,
 }
 
@@ -857,8 +974,64 @@ pub fn placement_expr_id() -> ExprId {
     CTX.with(|ctx| ctx.borrow().placeholder)
 }
 
-pub fn placement_statm_id() -> StatmId {
+pub fn placement_stmt_id() -> StmtId {
     CTX.with(|ctx| ctx.borrow().statement_placeholder)
+}
+
+fn alloc_range_of_exprs(list: impl Iterator<Item = ExprId>) -> Range<u32> {
+    CTX.with(|ctx| {
+        let l = {
+            let ctx = ctx.borrow_mut();
+            ctx.expr_vecs.len() as u32
+        };
+        for item in list {
+            let mut ctx = ctx.borrow_mut();
+            ctx.expr_vecs.push(item);
+        }
+        let r = {
+            let ctx = ctx.borrow_mut();
+            ctx.expr_vecs.len() as u32
+        };
+        l..r
+    })
+}
+
+fn get_range_of_exprs<'a>(range: Range<u32>) -> &'a [ExprId] {
+    let range = range.start as usize..range.end as usize;
+    CTX.with(|ctx| {
+        let ctx = ctx.borrow();
+        let iter = ctx.expr_vecs.iter();
+
+        unsafe { std::mem::transmute(&ctx.expr_vecs[range]) }
+    })
+}
+
+fn alloc_range_of_stmts(list: impl Iterator<Item = StmtId>) -> Range<u32> {
+    CTX.with(|ctx| {
+        let l = {
+            let ctx = ctx.borrow_mut();
+            ctx.statement_vecs.len() as u32
+        };
+        for item in list {
+            let mut ctx = ctx.borrow_mut();
+            ctx.statement_vecs.push(item);
+        }
+        let r = {
+            let ctx = ctx.borrow_mut();
+            ctx.statement_vecs.len() as u32
+        };
+        l..r
+    })
+}
+
+fn get_range_of_stmts<'a>(range: Range<u32>) -> &'a [StmtId] {
+    let range = range.start as usize..range.end as usize;
+    CTX.with(|ctx| {
+        let ctx = ctx.borrow();
+        let iter = ctx.statement_vecs.iter();
+
+        unsafe { std::mem::transmute(&ctx.statement_vecs[range]) }
+    })
 }
 
 // impl<'a> From<Expression<'a>> for ExprId {
@@ -874,7 +1047,7 @@ pub fn get_expr<'a>(expr_id: ExprId) -> Expression<'a> {
     CTX.with(|ctx| unsafe { std::mem::transmute(ctx.borrow().arena.get(expr_id.into()).unwrap()) })
 }
 
-pub fn get_statement<'a>(statement_id: StatmId) -> Statement<'a> {
+pub fn get_statement<'a>(statement_id: StmtId) -> Statement<'a> {
     CTX.with(|ctx| unsafe {
         std::mem::transmute(
             ctx.borrow()
@@ -897,14 +1070,19 @@ where
     }
 }
 
-impl<'a, S> From<S> for StatmId
+impl<'a, S> From<S> for StmtId
 where
-    S: Statm<'a>,
+    S: Stmt<'a>,
 {
     fn from(value: S) -> Self {
         CTX.with(move |ctx| {
             let mut c = ctx.borrow_mut();
-            unsafe { StatmId(c.statement_arena.alloc(std::mem::transmute(value.enum_statm()))) }
+            unsafe {
+                StmtId(
+                    c.statement_arena
+                        .alloc(std::mem::transmute(value.enum_stmt())),
+                )
+            }
         })
     }
 }
@@ -966,6 +1144,19 @@ pub fn update_expr_for<'a, E: Expr<'a>, F: FnOnce(&mut E)>(expr_id: ExprId, f: F
 
         let mut c = ctx.borrow_mut();
         c.arena.update(expr_id.into(), val)?;
+        Some(())
+    })
+}
+
+pub fn update_stmt_for<'a, S: Stmt<'a>, F: FnOnce(&mut S)>(stmt_id: StmtId, f: F) -> Option<()> {
+    CTX.with(|ctx| {
+        let expr = get_statement(stmt_id);
+        let mut val = S::extract(&expr)?.clone();
+        f(&mut val);
+        let val = unsafe { std::mem::transmute(val.enum_stmt()) };
+
+        let mut c = ctx.borrow_mut();
+        c.statement_arena.update(stmt_id.into(), val)?;
         Some(())
     })
 }
